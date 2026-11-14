@@ -792,7 +792,9 @@
 
         // Three.js 3D Objects
         let scene, camera, renderer, controls;
-        let earthMesh, atmosphereMesh;
+        let earthMesh, earthMat, atmosphereMesh, atmoUniforms;
+        let holoGridMesh = null, orbitalRingA = null, orbitalRingB = null, starField = null, cityBeaconsGroup = null;
+        let currentArtStyle = 'orbital'; // 'orbital' | 'blueprint' | 'solar'
         let routeCurveMesh = null, pulseParticle = null;
         let originMarker = null, destMarker = null, locationMarker = null;
         let flightGroup = null;
@@ -896,10 +898,52 @@
                 }, 1800);
             });
 
-            const ambient = new THREE.AmbientLight(0xffffff, 1.0);
+            const ambient = new THREE.AmbientLight(0xdbeafe, 0.88);
             scene.add(ambient);
 
-            // Load optimized 2K Earth texture with fallback (disable mipmap generation for instant zero-lag upload)
+            const sunKey = new THREE.DirectionalLight(0xf8fafc, 1.15);
+            sunKey.position.set(220, 120, 180);
+            scene.add(sunKey);
+
+            const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.65);
+            rimLight.position.set(-200, -80, -180);
+            scene.add(rimLight);
+
+            // Deep Space Starfield Nebula
+            const starCount = 1400;
+            const starPos = new Float32Array(starCount * 3);
+            const starColors = new Float32Array(starCount * 3);
+            for (let i = 0; i < starCount; i++) {
+                const r = 460 + Math.random() * 440;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+                starPos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+                starPos[i * 3 + 2] = r * Math.cos(phi);
+
+                const tint = Math.random();
+                if (tint > 0.82) {
+                    starColors[i * 3] = 0.52; starColors[i * 3 + 1] = 0.86; starColors[i * 3 + 2] = 1.0;
+                } else if (tint > 0.68) {
+                    starColors[i * 3] = 1.0; starColors[i * 3 + 1] = 0.88; starColors[i * 3 + 2] = 0.66;
+                } else {
+                    starColors[i * 3] = 0.88; starColors[i * 3 + 1] = 0.93; starColors[i * 3 + 2] = 1.0;
+                }
+            }
+            const starGeo = new THREE.BufferGeometry();
+            starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+            starGeo.setAttribute('color', new THREE.BufferAttribute(starColors, 3));
+            const starMat = new THREE.PointsMaterial({
+                size: 1.8,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.82,
+                depthWrite: false
+            });
+            starField = new THREE.Points(starGeo, starMat);
+            scene.add(starField);
+
+            // Load 2K Earth Texture + 3D Topological Relief Bump/Specular Map
             const texLoader = new THREE.TextureLoader();
             const earthTex = texLoader.load('earth-night-2k.jpg', (tex) => {
                 tex.generateMipmaps = false;
@@ -927,22 +971,129 @@
             earthTex.minFilter = THREE.LinearFilter;
             earthTex.magFilter = THREE.LinearFilter;
 
-            const earthGeo = new THREE.SphereGeometry(GLOBE_RADIUS, 32, 32);
-            const earthMat = new THREE.MeshBasicMaterial({ map: earthTex });
+            const topoTex = texLoader.load('earth-topology.png', (tTex) => {
+                tTex.generateMipmaps = false;
+                tTex.minFilter = THREE.LinearFilter;
+                tTex.magFilter = THREE.LinearFilter;
+                if (earthMat) earthMat.needsUpdate = true;
+            });
+            topoTex.generateMipmaps = false;
+            topoTex.minFilter = THREE.LinearFilter;
+            topoTex.magFilter = THREE.LinearFilter;
+
+            const earthGeo = new THREE.SphereGeometry(GLOBE_RADIUS, 64, 64);
+            earthMat = new THREE.MeshPhongMaterial({
+                map: earthTex,
+                bumpMap: topoTex,
+                bumpScale: 2.4,
+                specularMap: topoTex,
+                specular: new THREE.Color(0x164e63),
+                shininess: 16,
+                emissive: new THREE.Color(0x04121f),
+                emissiveMap: earthTex,
+                emissiveIntensity: 0.65
+            });
             earthMesh = new THREE.Mesh(earthGeo, earthMat);
             scene.add(earthMesh);
 
-            // Atmosphere Glow
-            const atmoGeo = new THREE.SphereGeometry(GLOBE_RADIUS * 1.018, 32, 32);
-            const atmoMat = new THREE.MeshBasicMaterial({
+            // Holographic Geodesic Wireframe Graticule
+            const holoGeo = new THREE.SphereGeometry(GLOBE_RADIUS * 1.004, 28, 16);
+            const holoMat = new THREE.MeshBasicMaterial({
                 color: 0x38bdf8,
+                wireframe: true,
                 transparent: true,
-                opacity: 0.12,
+                opacity: 0.08,
+                depthWrite: false
+            });
+            holoGridMesh = new THREE.Mesh(holoGeo, holoMat);
+            scene.add(holoGridMesh);
+
+            // Fresnel Atmospheric Rim Glow Shader
+            atmoUniforms = {
+                glowColor: { value: new THREE.Color(0x38bdf8) },
+                intensity: { value: 0.72 }
+            };
+            const atmoGeo = new THREE.SphereGeometry(GLOBE_RADIUS * 1.065, 48, 48);
+            const atmoMat = new THREE.ShaderMaterial({
+                uniforms: atmoUniforms,
+                vertexShader: [
+                    'varying vec3 vNormal;',
+                    'varying vec3 vPositionNormal;',
+                    'void main() {',
+                    '  vNormal = normalize(normalMatrix * normal);',
+                    '  vPositionNormal = normalize((modelViewMatrix * vec4(position, 1.0)).xyz);',
+                    '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+                    '}'
+                ].join('\n'),
+                fragmentShader: [
+                    'uniform vec3 glowColor;',
+                    'uniform float intensity;',
+                    'varying vec3 vNormal;',
+                    'varying vec3 vPositionNormal;',
+                    'void main() {',
+                    '  float fresnel = pow(max(0.0, 0.72 - dot(vNormal, vec3(0.0, 0.0, 1.0))), 3.1);',
+                    '  gl_FragColor = vec4(glowColor, 1.0) * fresnel * intensity;',
+                    '}'
+                ].join('\n'),
+                blending: THREE.AdditiveBlending,
                 side: THREE.BackSide,
+                transparent: true,
                 depthWrite: false
             });
             atmosphereMesh = new THREE.Mesh(atmoGeo, atmoMat);
             scene.add(atmosphereMesh);
+
+            // Dual Orbital Telemetry Rings
+            const ringGeoA = new THREE.TorusGeometry(GLOBE_RADIUS * 1.24, 0.22, 8, 120);
+            const ringMatA = new THREE.MeshBasicMaterial({
+                color: 0x0ea5e9,
+                transparent: true,
+                opacity: 0.34,
+                depthWrite: false
+            });
+            orbitalRingA = new THREE.Mesh(ringGeoA, ringMatA);
+            orbitalRingA.rotation.x = Math.PI * 0.42;
+            orbitalRingA.rotation.y = 0.25;
+            scene.add(orbitalRingA);
+
+            const ringGeoB = new THREE.TorusGeometry(GLOBE_RADIUS * 1.38, 0.16, 8, 120);
+            const ringMatB = new THREE.MeshBasicMaterial({
+                color: 0x10b981,
+                transparent: true,
+                opacity: 0.22,
+                depthWrite: false
+            });
+            orbitalRingB = new THREE.Mesh(ringGeoB, ringMatB);
+            orbitalRingB.rotation.x = -Math.PI * 0.34;
+            orbitalRingB.rotation.z = 0.42;
+            scene.add(orbitalRingB);
+
+            // Strategic Global Beacon Nodes
+            cityBeaconsGroup = new THREE.Group();
+            const strategicNodes = [
+                { lat: 22.5726, lon: 88.3639, color: 0x00e5ff }, // Kolkata
+                { lat: 28.6139, lon: 77.2090, color: 0x38bdf8 }, // Delhi
+                { lat: 19.0760, lon: 72.8777, color: 0x38bdf8 }, // Mumbai
+                { lat: 51.5074, lon: -0.1278, color: 0x10b981 }, // London
+                { lat: 35.6762, lon: 139.6503, color: 0xf59e0b }, // Tokyo
+                { lat: 40.7128, lon: -74.0060, color: 0x38bdf8 }, // New York
+                { lat: 25.2048, lon: 55.2708, color: 0x10b981 }, // Dubai
+                { lat: 1.3521, lon: 103.8198, color: 0x00e5ff }  // Singapore
+            ];
+            strategicNodes.forEach((node) => {
+                const surfacePos = latLonToVector3(node.lat, node.lon, GLOBE_RADIUS + 0.35);
+                const dotGeo = new THREE.SphereGeometry(0.95, 10, 10);
+                const dotMat = new THREE.MeshBasicMaterial({ color: node.color });
+                const dot = new THREE.Mesh(dotGeo, dotMat);
+                dot.position.copy(surfacePos);
+                cityBeaconsGroup.add(dot);
+
+                const topPos = latLonToVector3(node.lat, node.lon, GLOBE_RADIUS + 5.2);
+                const lineGeo = new THREE.BufferGeometry().setFromPoints([surfacePos, topPos]);
+                const lineMat = new THREE.LineBasicMaterial({ color: node.color, transparent: true, opacity: 0.7 });
+                cityBeaconsGroup.add(new THREE.Line(lineGeo, lineMat));
+            });
+            scene.add(cityBeaconsGroup);
 
             flightGroup = new THREE.Group();
             scene.add(flightGroup);
@@ -950,11 +1101,57 @@
             flightGeometry.rotateX(Math.PI / 2);
             flightMaterial = new THREE.MeshBasicMaterial({ color: 0x10b981 });
 
-            // Default focus on India
-            flyTo(20.5937, 78.9629, 230);
+            renderer.domElement.addEventListener('webglcontextlost', (e) => {
+                e.preventDefault();
+                pauseGlobe();
+            }, false);
+            renderer.domElement.addEventListener('webglcontextrestored', () => {
+                resumeGlobe();
+            }, false);
+
+            // Default focus on South Asia / Kolkata-India
+            flyTo(22.5726, 84.0, 235);
 
             window.addEventListener('resize', onWindowResize);
             animate();
+        }
+
+        function setArtStyle(style) {
+            currentArtStyle = style || 'orbital';
+            if (!earthMat || !holoGridMesh || !atmoUniforms) return;
+
+            if (currentArtStyle === 'blueprint') {
+                earthMat.emissive.setHex(0x032238);
+                earthMat.emissiveIntensity = 0.85;
+                earthMat.wireframe = false;
+                holoGridMesh.material.opacity = 0.32;
+                holoGridMesh.material.color.setHex(0x00e5ff);
+                atmoUniforms.glowColor.value.setHex(0x00e5ff);
+                atmoUniforms.intensity.value = 0.95;
+                if (orbitalRingA) orbitalRingA.material.color.setHex(0x00e5ff);
+                if (orbitalRingB) orbitalRingB.material.color.setHex(0x38bdf8);
+            } else if (currentArtStyle === 'solar') {
+                earthMat.emissive.setHex(0x2a1405);
+                earthMat.emissiveIntensity = 0.75;
+                earthMat.wireframe = false;
+                holoGridMesh.material.opacity = 0.14;
+                holoGridMesh.material.color.setHex(0xf59e0b);
+                atmoUniforms.glowColor.value.setHex(0xf59e0b);
+                atmoUniforms.intensity.value = 0.85;
+                if (orbitalRingA) orbitalRingA.material.color.setHex(0xf59e0b);
+                if (orbitalRingB) orbitalRingB.material.color.setHex(0xfb7185);
+            } else {
+                earthMat.emissive.setHex(0x04121f);
+                earthMat.emissiveIntensity = 0.65;
+                earthMat.wireframe = false;
+                holoGridMesh.material.opacity = 0.08;
+                holoGridMesh.material.color.setHex(0x38bdf8);
+                atmoUniforms.glowColor.value.setHex(0x38bdf8);
+                atmoUniforms.intensity.value = 0.72;
+                if (orbitalRingA) orbitalRingA.material.color.setHex(0x0ea5e9);
+                if (orbitalRingB) orbitalRingB.material.color.setHex(0x10b981);
+            }
+            earthMat.needsUpdate = true;
         }
 
         // ==========================================
@@ -1148,6 +1345,17 @@
                 pulseProgress = (pulseProgress + 0.48 * dt) % 1.0;
                 pulseParticle.curve.getPoint(pulseProgress, _pulseVec);
                 pulseParticle.position.copy(_pulseVec);
+            }
+
+            // Animate Orbital Rings & Starfield
+            if (orbitalRingA) {
+                orbitalRingA.rotation.z += 0.18 * dt;
+            }
+            if (orbitalRingB) {
+                orbitalRingB.rotation.z -= 0.14 * dt;
+            }
+            if (starField) {
+                starField.rotation.y += 0.012 * dt;
             }
 
             // Animate Markers
@@ -2156,20 +2364,47 @@
             pause: () => pauseGlobe(),
             resume: () => resumeGlobe(),
             showLocation: (data) => showLocation(data),
-            showRoute: (data) => showRoute(data.originLat, data.originLon, data.destLat, data.destLon, data),
+            showRoute: (origLatOrData, origLon, destLat, destLon, meta) => {
+                if (typeof origLatOrData === 'object' && origLatOrData !== null) {
+                    const d = origLatOrData;
+                    showRoute(d.originLat, d.originLon, d.destLat, d.destLon, d);
+                } else {
+                    const m = meta || {};
+                    showRoute(origLatOrData, origLon, destLat, destLon, {
+                        originName: m.originName || m.origName || 'Origin',
+                        destName: m.destName || 'Destination',
+                        distance_km: m.distance_km,
+                        distance_nm: m.distance_nm,
+                        flight_time: m.flight_time,
+                        bearing: m.bearing
+                    });
+                }
+            },
             showDrivingRoute: (data) => showDrivingRoute(data),
             setIssData: (data) => setIssData(data),
             setEarthquakes: (data) => setEarthquakes(data),
             setNearbyPlaces: (data) => setNearbyPlaces(data),
             toggleWeatherRadar: (data) => toggleWeatherRadar(data),
+            toggleIss: () => toggleIss(),
             toggleIssTracker: () => toggleIss(),
             toggleEarthquakes: () => toggleEarthquakes(),
+            toggleNight: () => toggleNight(),
             toggleNightShadow: () => toggleNight(),
             togglePoiRadar: () => togglePoiCard(),
+            searchPoi: (q) => {
+                if (!isPoiActive) togglePoiCard();
+                const input = document.getElementById('poi-search-input');
+                if (input && q) input.value = q;
+                searchPoi(q);
+            },
+            setArtStyle: (style) => setArtStyle(style),
             flyTo: (lat, lon, dist) => flyTo(lat, lon, dist),
             setFlights: (flights) => setFlights(flights),
             clearRoute: () => hideRouteCard(),
-            switchMode: (m) => switchMode(m),
+            switchMode: (m) => {
+                const normalized = m === '2d' ? 'STREET' : m === '3d' ? '3D' : m;
+                switchMode(normalized);
+            },
             resetView: () => resetView(),
             updateCartoKey: (k) => {
                 if (tileLayerStreet) {

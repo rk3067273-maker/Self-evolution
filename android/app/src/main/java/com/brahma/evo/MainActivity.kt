@@ -25,6 +25,9 @@ import androidx.core.content.FileProvider
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
 import java.io.File
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Locale
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
@@ -72,6 +75,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         settings.mediaPlaybackRequiresUserGesture = false
         settings.allowFileAccess = true
         settings.databaseEnabled = true
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        settings.javaScriptCanOpenWindowsAutomatically = true
 
         webView.addJavascriptInterface(BrahmaAndroidBridge(), "BrahmaNative")
 
@@ -282,6 +287,71 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         @JavascriptInterface
         fun updateOverlayMood(mood: String) {
             BrahmaOverlayService.currentMood = mood
+        }
+
+        @JavascriptInterface
+        fun updateOverlayScale(scale: Float) {
+            val clamped = scale.coerceIn(0.55f, 1.45f)
+            BrahmaOverlayService.currentScale = clamped
+            BrahmaOverlayService.instance?.applyScale(clamped)
+        }
+
+        @JavascriptInterface
+        fun httpPostJson(urlString: String, jsonBody: String): String {
+            return try {
+                val conn = (URL(urlString).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 15000
+                    readTimeout = 30000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                    setRequestProperty("Accept", "application/json")
+                }
+                OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
+                    writer.write(jsonBody)
+                    writer.flush()
+                }
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                JSONObject().apply {
+                    put("ok", code in 200..299)
+                    put("status", code)
+                    put("body", body)
+                }.toString()
+            } catch (e: Exception) {
+                JSONObject().apply {
+                    put("ok", false)
+                    put("status", 0)
+                    put("error", e.message ?: "HTTP POST failed")
+                }.toString()
+            }
+        }
+
+        @JavascriptInterface
+        fun httpGet(urlString: String): String {
+            return try {
+                val conn = (URL(urlString).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 15000
+                    readTimeout = 20000
+                    setRequestProperty("Accept", "application/json")
+                }
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                JSONObject().apply {
+                    put("ok", code in 200..299)
+                    put("status", code)
+                    put("body", body)
+                }.toString()
+            } catch (e: Exception) {
+                JSONObject().apply {
+                    put("ok", false)
+                    put("status", 0)
+                    put("error", e.message ?: "HTTP GET failed")
+                }.toString()
+            }
         }
 
         @JavascriptInterface

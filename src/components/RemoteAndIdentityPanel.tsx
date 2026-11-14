@@ -17,7 +17,13 @@ import {
 import type { IdentityState, MemoryItem, RemoteLog, SharedFileItem } from '../types/brahma';
 import { brahmaFetch } from '../lib/brahmaClient';
 
-export const RemoteAndIdentityPanel: React.FC = () => {
+interface RemoteAndIdentityPanelProps {
+  onAssistantNameChanged?: (name: string) => void;
+}
+
+export const RemoteAndIdentityPanel: React.FC<RemoteAndIdentityPanelProps> = ({
+  onAssistantNameChanged,
+}) => {
   const [subTab, setSubTab] = useState<'remote' | 'identity'>('remote');
 
   // Remote Console State
@@ -97,6 +103,9 @@ export const RemoteAndIdentityPanel: React.FC = () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(identity),
     });
+    if (identity.assistant?.name?.trim()) {
+      onAssistantNameChanged?.(identity.assistant.name.trim());
+    }
     setSavedNotice(true);
     setTimeout(() => setSavedNotice(false), 1800);
   };

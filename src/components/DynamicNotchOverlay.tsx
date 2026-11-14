@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Terminal } from 'lucide-react';
+import { GripVertical, Terminal } from 'lucide-react';
 import type { OrbState } from '../types/brahma';
 
 export type NotchMood = 'neutral' | 'happy' | 'sad' | 'angry' | 'dizzy';
@@ -12,6 +12,10 @@ interface DynamicNotchOverlayProps {
   onTogglePopup: () => void;
   expressionsEnabled?: boolean;
   dizzyEnabled?: boolean;
+  silentUntilUserSpeaks?: boolean;
+  scale?: number;
+  position?: { x: number; y: number } | null;
+  onPositionChange?: (pos: { x: number; y: number } | null) => void;
   forcedMood?: { mood: NotchMood; ts: number } | null;
   onDizzyTriggered?: (phrase: string) => void;
 }
@@ -40,6 +44,10 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
   onTogglePopup,
   expressionsEnabled = true,
   dizzyEnabled = true,
+  silentUntilUserSpeaks = true,
+  scale = 0.82,
+  position = null,
+  onPositionChange,
   forcedMood = null,
   onDizzyTriggered,
 }) => {
@@ -50,14 +58,58 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
   const [phase, setPhase] = useState(0);
   const [mood, setMood] = useState<NotchMood>('neutral');
   const [dizzyBubble, setDizzyBubble] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [livePos, setLivePos] = useState<{ x: number; y: number } | null>(position);
 
   const motionTrailRef = useRef<
     Array<{ x: number; y: number; t: number; dx: number; dy: number }>
   >([]);
   const lastDizzyAtRef = useRef<number>(0);
   const moodTimeoutRef = useRef<number>(0);
+  const dragStateRef = useRef<{
+    active: boolean;
+    moved: boolean;
+    pointerId: number;
+    startPointerX: number;
+    startPointerY: number;
+    startBoxX: number;
+    startBoxY: number;
+  }>({
+    active: false,
+    moved: false,
+    pointerId: -1,
+    startPointerX: 0,
+    startPointerY: 0,
+    startBoxX: 0,
+    startBoxY: 0,
+  });
 
-  const triggerDizzyState = (speak = true) => {
+  useEffect(() => {
+    setLivePos(position);
+  }, [position]);
+
+  const clampPos = (x: number, y: number) => {
+    const rect = notchRef.current?.getBoundingClientRect();
+    const w = rect?.width || 190 * scale;
+    const h = rect?.height || 36 * scale;
+    const maxX = Math.max(8, window.innerWidth - w - 8);
+    const maxY = Math.max(8, window.innerHeight - h - 8);
+    return {
+      x: Math.round(Math.min(maxX, Math.max(6, x))),
+      y: Math.round(Math.min(maxY, Math.max(6, y))),
+    };
+  };
+
+  useEffect(() => {
+    const onResize = () => {
+      setLivePos((prev) => (prev ? clampPos(prev.x, prev.y) : null));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scale]);
+
+  const triggerDizzyState = (speak = false) => {
     const now = Date.now();
     lastDizzyAtRef.current = now;
     setMood('dizzy');
@@ -69,7 +121,8 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
     };
     win.BrahmaNative?.updateOverlayMood?.('dizzy');
 
-    if (speak) {
+    // Never speak unsolicited when silentUntilUserSpeaks is active
+    if (speak && !silentUntilUserSpeaks) {
       onDizzyTriggered?.(line);
     }
 
@@ -102,7 +155,7 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forcedMood]);
 
-  // Occasional autonomous mood expressions (sad, angry, happy) when idle/online
+  // Occasional autonomous visual mood expressions (silent, no speech)
   useEffect(() => {
     if (!expressionsEnabled) {
       setMood((prev) => (prev === 'dizzy' ? prev : 'neutral'));
@@ -127,7 +180,7 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
     return () => window.clearInterval(id);
   }, [expressionsEnabled, orbState]);
 
-  // Track taps, drags, touchmoves & detect rapid dizzy scrubbing anywhere on screen
+  // Track taps, pointer moves & detect rapid dizzy scrubbing (unless dragging the notch itself)
   useEffect(() => {
     const updateEyeVector = (clientX: number, clientY: number, isTap: boolean) => {
       const rect = notchRef.current?.getBoundingClientRect();
@@ -155,8 +208,7 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
       };
       win.BrahmaNative?.updateOverlayState?.(orbState, voiceLevel, nx, ny);
 
-      // Rapid finger scribble / circular swirl detection -> Dizzy!
-      if (dizzyEnabled) {
+      if (dizzyEnabled && !dragStateRef.current.active) {
         const now = Date.now();
         const trail = motionTrailRef.current;
         const prev = trail[trail.length - 1];
@@ -167,7 +219,6 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
         if (!prev || stepLen > 4) {
           trail.push({ x: clientX, y: clientY, t: now, dx: stepDx, dy: stepDy });
         }
-        // Keep last 1.1s window
         while (trail.length > 0 && now - trail[0].t > 1100) {
           trail.shift();
         }
@@ -188,7 +239,7 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
           }
           if (totalDist > 750 && reversals >= 5) {
             motionTrailRef.current = [];
-            triggerDizzyState(true);
+            triggerDizzyState(false);
           }
         }
       }
@@ -220,7 +271,7 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
       window.removeEventListener('touchmove', handleTouchMove);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dizzyEnabled, orbState, voiceLevel]);
+  }, [dizzyEnabled, orbState, voiceLevel, silentUntilUserSpeaks]);
 
   // Natural blinking
   useEffect(() => {
@@ -250,10 +301,56 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
     return () => cancelAnimationFrame(rafId);
   }, [mood, orbState, voiceLevel]);
 
+  // Notch drag handlers (move to any corner or spot on screen)
+  const handleNotchPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    const rect = notchRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragStateRef.current = {
+      active: true,
+      moved: false,
+      pointerId: e.pointerId,
+      startPointerX: e.clientX,
+      startPointerY: e.clientY,
+      startBoxX: livePos ? livePos.x : rect.left,
+      startBoxY: livePos ? livePos.y : rect.top,
+    };
+    setDragging(true);
+  };
+
+  const handleNotchPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const st = dragStateRef.current;
+    if (!st.active || st.pointerId !== e.pointerId) return;
+    const dx = e.clientX - st.startPointerX;
+    const dy = e.clientY - st.startPointerY;
+    if (Math.hypot(dx, dy) > 4) {
+      st.moved = true;
+    }
+    if (st.moved) {
+      const clamped = clampPos(st.startBoxX + dx, st.startBoxY + dy);
+      setLivePos(clamped);
+    }
+  };
+
+  const handleNotchPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const st = dragStateRef.current;
+    if (!st.active || st.pointerId !== e.pointerId) return;
+    st.active = false;
+    setDragging(false);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+    if (st.moved && livePos) {
+      onPositionChange?.(livePos);
+    }
+  };
+
   const pupilX = mood === 'sad' ? look.x * 2.5 : look.x * 4.5;
   const pupilY = mood === 'sad' ? Math.max(1.5, look.y * 3.5) : look.y * 3.8;
 
-  // Mood-aware eyebrow geometry
   const browLift =
     mood === 'angry'
       ? 1.5
@@ -282,7 +379,24 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
         ? '#60a5fa'
         : mood === 'dizzy'
           ? '#f59e0b'
-          : '#00e5ff';
+          : orbState === 'THINKING'
+            ? '#a78bfa'
+            : orbState === 'SPEAKING'
+              ? '#fb7185'
+              : orbState === 'LISTENING'
+                ? '#2dd4bf'
+                : '#00e5ff';
+
+  const notchRgbMode =
+    mood === 'neutral' && !terminalRunning
+      ? orbState === 'THINKING'
+        ? 'thinking'
+        : orbState === 'SPEAKING'
+          ? 'speaking'
+          : orbState === 'LISTENING'
+            ? 'listening'
+            : null
+      : null;
 
   const effectiveLevel =
     orbState === 'SPEAKING'
@@ -293,11 +407,39 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
           ? 0.25
           : 0.06;
 
+  const safeScale = Math.min(1.4, Math.max(0.55, scale));
+  const dizzyRot = mood === 'dizzy' ? `rotate(${Math.sin(phase * 1.6) * 4}deg)` : '';
+
+  const positionStyle: React.CSSProperties = livePos
+    ? {
+        left: `${livePos.x}px`,
+        top: `${livePos.y}px`,
+        transformOrigin: 'top left',
+        transform: `scale(${safeScale}) ${dizzyRot}`.trim(),
+      }
+    : {
+        left: '50%',
+        top: '6px',
+        transformOrigin: 'top center',
+        transform: `translateX(-50%) scale(${safeScale}) ${dizzyRot}`.trim(),
+      };
+
   return (
     <>
       <div
         ref={notchRef}
-        className={`fixed top-1.5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-3.5 h-10 rounded-full bg-[#050608]/95 backdrop-blur-xl border transition-all duration-200 shadow-[0_8px_28px_rgba(0,0,0,0.85)] select-none ${
+        onPointerDown={handleNotchPointerDown}
+        onPointerMove={handleNotchPointerMove}
+        onPointerUp={handleNotchPointerUp}
+        onPointerCancel={handleNotchPointerUp}
+        onDoubleClick={() => {
+          setLivePos(null);
+          onPositionChange?.(null);
+        }}
+        title="ড্র্যাগ করে যেকোনো কোণায় নিন · Double-click করলে উপরে মাঝখানে ফিরে আসবে"
+        className={`fixed z-50 flex items-center gap-2.5 px-3 h-9 rounded-full bg-[#050608]/95 backdrop-blur-xl border select-none touch-none ${
+          dragging ? 'cursor-grabbing ring-2 ring-cyan-400/50' : 'cursor-grab transition-shadow duration-200'
+        } shadow-[0_8px_28px_rgba(0,0,0,0.85)] ${
           mood === 'dizzy'
             ? 'border-amber-400/75 shadow-[0_0_26px_rgba(245,158,11,0.45)] animate-pulse'
             : mood === 'angry'
@@ -306,34 +448,39 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
                 ? 'border-blue-400/65 shadow-[0_0_22px_rgba(96,165,250,0.3)]'
                 : terminalRunning
                   ? 'border-emerald-400/60 shadow-[0_0_24px_rgba(16,185,129,0.28)]'
-                  : orbState === 'SPEAKING'
-                    ? 'border-cyan-400/60 shadow-[0_0_24px_rgba(0,229,255,0.28)]'
-                    : 'border-white/15'
+                  : orbState === 'THINKING'
+                    ? 'border-violet-400/45 shadow-[0_0_24px_rgba(167,139,250,0.26)]'
+                    : orbState === 'SPEAKING'
+                      ? 'border-rose-400/45 shadow-[0_0_24px_rgba(251,113,133,0.26)]'
+                      : orbState === 'LISTENING'
+                        ? 'border-teal-400/45 shadow-[0_0_24px_rgba(45,212,191,0.26)]'
+                        : 'border-white/15'
         }`}
-        style={{
-          transform:
-            mood === 'dizzy'
-              ? `translateX(-50%) rotate(${Math.sin(phase * 1.6) * 4}deg)`
-              : 'translateX(-50%)',
-        }}
+        style={positionStyle}
       >
+        {notchRgbMode && (
+          <div className={`brahma-rgb-rim brahma-rgb-${notchRgbMode}`}>
+            <div className="brahma-rgb-rim-rotor" />
+          </div>
+        )}
+
+        <GripVertical className="w-3 h-3 text-slate-500 -ml-1 shrink-0" />
+
         {/* Expressive Eye Pair with Eyebrows */}
-        <div className="flex items-center gap-2 pl-0.5" aria-hidden="true">
+        <div className="flex items-center gap-1.5" aria-hidden="true">
           {[0, 1].map((eyeIdx) => {
             const browAngle = getBrowAngle(eyeIdx);
             return (
               <div key={eyeIdx} className="relative flex flex-col items-center">
-                {/* Eyebrow */}
                 <div
-                  className="w-3.5 h-[2px] rounded-full mb-[2px] transition-transform duration-100"
+                  className="w-3 h-[2px] rounded-full mb-[2px] transition-transform duration-100"
                   style={{
                     backgroundColor: mood === 'angry' ? '#fda4af' : '#e2e8f0',
                     transform: `translate(${pupilX * 0.4}px, ${browLift}px) rotate(${browAngle}deg)`,
                   }}
                 />
-                {/* Eye Socket + Mood Pupil */}
                 <div
-                  className={`relative w-4 h-4 rounded-full bg-[#0d1320] border flex items-center justify-center overflow-hidden transition-transform duration-100 ${
+                  className={`relative w-3.5 h-3.5 rounded-full bg-[#0d1320] border flex items-center justify-center overflow-hidden transition-transform duration-100 ${
                     isBlinking && mood !== 'dizzy'
                       ? 'scale-y-[0.12]'
                       : mood === 'angry'
@@ -347,7 +494,7 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
                   {mood === 'dizzy' ? (
                     <svg
                       viewBox="0 0 24 24"
-                      className="w-3.5 h-3.5 text-amber-400 animate-spin"
+                      className="w-3 h-3 text-amber-400 animate-spin"
                       style={{ animationDuration: '0.55s' }}
                       fill="none"
                       stroke="currentColor"
@@ -358,14 +505,14 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
                     </svg>
                   ) : (
                     <div
-                      className="w-2 h-2 rounded-full transition-transform duration-75"
+                      className="w-1.5 h-1.5 rounded-full transition-transform duration-75"
                       style={{
                         backgroundColor: eyeGlowColor,
                         boxShadow: `0 0 8px ${eyeGlowColor}`,
                         transform: `translate(${pupilX}px, ${pupilY}px) scale(${mood === 'sad' ? 0.88 : 1})`,
                       }}
                     >
-                      <div className="w-[2.5px] h-[2.5px] rounded-full bg-white ml-[1px] mt-[1px]" />
+                      <div className="w-[2px] h-[2px] rounded-full bg-white ml-[1px] mt-[1px]" />
                     </div>
                   )}
                 </div>
@@ -374,21 +521,21 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
           })}
         </div>
 
-        <div className="w-px h-5 bg-white/10" />
+        <div className="w-px h-4 bg-white/10" />
 
         {/* Multi-Color Dot-Matrix Voice Equalizer */}
-        <div className="flex items-end gap-[4px] h-6 py-0.5" aria-label="Voice Equalizer">
+        <div className="flex items-end gap-[3.5px] h-5 py-0.5" aria-label="Voice Equalizer">
           {DOT_COLUMNS.map((color, colIdx) => {
             const wave = ((Math.sin(phase + colIdx * 0.9) + 1) * 0.5) * effectiveLevel;
             const activeRows = Math.max(1, Math.min(4, Math.round(1 + wave * 4.2)));
             return (
-              <div key={colIdx} className="flex flex-col-reverse gap-[2.5px]">
+              <div key={colIdx} className="flex flex-col-reverse gap-[2px]">
                 {[0, 1, 2, 3].map((rowIdx) => {
                   const lit = rowIdx < activeRows;
                   return (
                     <span
                       key={rowIdx}
-                      className="w-[3.5px] h-[3.5px] rounded-full transition-opacity duration-75"
+                      className="w-[3px] h-[3px] rounded-full transition-opacity duration-75"
                       style={{
                         backgroundColor: color,
                         opacity: lit ? 1 : 0.16,
@@ -407,7 +554,7 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
           type="button"
           onClick={onTogglePopup}
           title={popupVisible ? 'Hide Terminal Popup' : 'Show Terminal Popup'}
-          className={`ml-0.5 px-2 h-7 rounded-full border text-[10px] font-semibold inline-flex items-center gap-1 transition cursor-pointer ${
+          className={`ml-0.5 px-2 h-6 rounded-full border text-[10px] font-semibold inline-flex items-center gap-1 transition cursor-pointer ${
             popupVisible || terminalRunning
               ? 'bg-cyan-500/20 border-cyan-400/60 text-cyan-200'
               : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300'
@@ -420,9 +567,16 @@ export const DynamicNotchOverlay: React.FC<DynamicNotchOverlayProps> = ({
         </button>
       </div>
 
-      {/* Floating Speech Pill when Dizzy */}
+      {/* Visual-only Floating Thought Pill when Dizzy */}
       {dizzyBubble && (
-        <div className="fixed top-12 left-1/2 -translate-x-1/2 z-50 px-3.5 py-1.5 rounded-full bg-[#120d05]/95 border border-amber-400/60 text-[11px] font-semibold text-amber-200 shadow-xl whitespace-nowrap animate-bounce pointer-events-none">
+        <div
+          className="fixed z-50 px-3 py-1 rounded-full bg-[#120d05]/95 border border-amber-400/60 text-[11px] font-semibold text-amber-200 shadow-xl whitespace-nowrap animate-bounce pointer-events-none"
+          style={
+            livePos
+              ? { left: `${livePos.x}px`, top: `${livePos.y + 42 * safeScale}px` }
+              : { left: '50%', top: `${12 + 38 * safeScale}px`, transform: 'translateX(-50%)' }
+          }
+        >
           😵 {dizzyBubble}
         </div>
       )}

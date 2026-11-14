@@ -22,8 +22,10 @@ jobs:
 
       - name: Install dependencies & build web bundle
         run: |
-          npm install --no-audit --no-fund
+          npm install --no-audit --no-fund || npm install --no-audit --no-fund --legacy-peer-deps
+          npm run lint
           npm run build
+          rm -rf android/app/src/main/assets/public
           mkdir -p android/app/src/main/assets/public
           cp -r dist/* android/app/src/main/assets/public/
 

@@ -25,15 +25,18 @@ import kotlin.math.sin
 class BrahmaOverlayService : Service() {
 
     companion object {
+        @Volatile var instance: BrahmaOverlayService? = null
         @Volatile var currentOrbState: String = "ONLINE"
         @Volatile var currentVoiceLevel: Float = 0.08f
         @Volatile var targetLookX: Float = 0f
         @Volatile var targetLookY: Float = 0f
         @Volatile var currentMood: String = "neutral"
+        @Volatile var currentScale: Float = 0.82f
     }
 
     private lateinit var windowManager: WindowManager
     private lateinit var notchView: DynamicNotchView
+    private lateinit var overlayParams: WindowManager.LayoutParams
     private val handler = Handler(Looper.getMainLooper())
     private var tick = 0f
 
@@ -51,6 +54,7 @@ class BrahmaOverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         startForegroundNotification()
 
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -63,22 +67,38 @@ class BrahmaOverlayService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        val params = WindowManager.LayoutParams(
-            dp(220),
-            dp(42),
+        val s = currentScale.coerceIn(0.55f, 1.45f)
+        overlayParams = WindowManager.LayoutParams(
+            dp((200 * s).toInt()),
+            dp((38 * s).toInt()),
             type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = dp(8)
+            gravity = Gravity.TOP or Gravity.START
+            x = (resources.displayMetrics.widthPixels - dp((200 * s).toInt())) / 2
+            y = dp(10)
         }
 
-        windowManager.addView(notchView, params)
+        windowManager.addView(notchView, overlayParams)
         handler.post(ticker)
     }
 
+    fun applyScale(scale: Float) {
+        handler.post {
+            if (!::windowManager.isInitialized || !::notchView.isInitialized || !::overlayParams.isInitialized) return@post
+            val s = scale.coerceIn(0.55f, 1.45f)
+            overlayParams.width = dp((200 * s).toInt())
+            overlayParams.height = dp((38 * s).toInt())
+            try {
+                windowManager.updateViewLayout(notchView, overlayParams)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     override fun onDestroy() {
+        instance = null
         handler.removeCallbacks(ticker)
         if (::notchView.isInitialized) {
             windowManager.removeView(notchView)
@@ -98,8 +118,8 @@ class BrahmaOverlayService : Service() {
             nm.createNotificationChannel(channel)
         }
         val notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Brahma AI Evo Active")
-            .setContentText("Dynamic Notch eye & voice overlay running")
+            .setContentTitle("Brahma AI Active")
+            .setContentText("Movable Dynamic Notch overlay running")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .build()
@@ -109,6 +129,12 @@ class BrahmaOverlayService : Service() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     inner class DynamicNotchView(context: Context) : View(context) {
+        private var initialX = 0
+        private var initialY = 0
+        private var initialTouchX = 0f
+        private var initialTouchY = 0f
+        private var isDragging = false
+
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#050608") }
         private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#3300E5FF")
@@ -139,12 +165,42 @@ class BrahmaOverlayService : Service() {
         private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
         override fun onTouchEvent(event: MotionEvent): Boolean {
-            if (event.action == MotionEvent.ACTION_DOWN) {
-                val launch = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = overlayParams.x
+                    initialY = overlayParams.y
+                    initialTouchX = event.rawX
+                    initialTouchY = event.rawY
+                    isDragging = false
+                    return true
                 }
-                if (launch != null) startActivity(launch)
-                return true
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - initialTouchX).toInt()
+                    val dy = (event.rawY - initialTouchY).toInt()
+                    if (kotlin.math.abs(dx) > 8 || kotlin.math.abs(dy) > 8) {
+                        isDragging = true
+                    }
+                    if (isDragging) {
+                        val maxX = (resources.displayMetrics.widthPixels - width).coerceAtLeast(0)
+                        val maxY = (resources.displayMetrics.heightPixels - height).coerceAtLeast(0)
+                        overlayParams.x = (initialX + dx).coerceIn(0, maxX)
+                        overlayParams.y = (initialY + dy).coerceIn(0, maxY)
+                        try {
+                            windowManager.updateViewLayout(this, overlayParams)
+                        } catch (_: Exception) {
+                        }
+                    }
+                    return true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!isDragging) {
+                        val launch = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        }
+                        if (launch != null) startActivity(launch)
+                    }
+                    return true
+                }
             }
             return super.onTouchEvent(event)
         }

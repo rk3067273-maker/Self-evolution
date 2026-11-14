@@ -1,13 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   X,
-  KeyRound,
   ShieldCheck,
   Sliders,
   CheckCircle2,
   AlertTriangle,
-  Eye,
-  EyeOff,
   Mic,
   Camera,
   Accessibility,
@@ -23,14 +20,18 @@ import {
   Frown,
   Flame,
   RotateCw,
+  UserCheck,
+  Maximize2,
+  MapPinOff,
+  VolumeX,
 } from 'lucide-react';
 import {
+  brahmaFetch,
   getBrahmaNative,
   getPermissionStatuses,
   loadBrahmaSettings,
   requestPermissionByKey,
   saveBrahmaSettings,
-  verifyGeminiApiKey,
   verifyServerConnection,
   type AndroidPermissionStatus,
   type BrahmaSettings,
@@ -54,24 +55,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [subTab, setSubTab] = useState<'api' | 'permissions' | 'notch'>(initialTab);
   const [settings, setSettings] = useState<BrahmaSettings>(() => loadBrahmaSettings());
-  const [showKey, setShowKey] = useState(false);
-
-  const [verifyingKey, setVerifyingKey] = useState(false);
-  const [keyStatus, setKeyStatus] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const [testingServer, setTestingServer] = useState(false);
-  const [serverStatus, setServerStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [serverStatus, setServerStatus] = useState<{ ok: boolean; geminiConfigured: boolean; msg: string } | null>(null);
 
   const [perms, setPerms] = useState<AndroidPermissionStatus | null>(null);
   const [refreshingPerms, setRefreshingPerms] = useState(false);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
 
+  const checkServerStatus = useCallback(async (urlOverride?: string) => {
+    setTestingServer(true);
+    try {
+      const res = await verifyServerConnection(urlOverride);
+      setServerStatus({ ok: res.ok, geminiConfigured: res.geminiConfigured, msg: res.message });
+    } finally {
+      setTestingServer(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (open) {
       setSubTab(initialTab);
-      setSettings(loadBrahmaSettings());
+      const current = loadBrahmaSettings();
+      setSettings(current);
+      if (initialTab === 'api') {
+        void checkServerStatus(current.serverUrl);
+      }
     }
-  }, [initialTab, open]);
+  }, [initialTab, open, checkServerStatus]);
 
   const refreshPermissions = useCallback(async () => {
     setRefreshingPerms(true);
@@ -93,37 +104,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const updateField = <K extends keyof BrahmaSettings>(k: K, val: BrahmaSettings[K]) => {
     setSettings((prev) => {
-      const next = { ...prev, [k]: val };
-      saveBrahmaSettings(next);
+      const next = saveBrahmaSettings({ ...prev, [k]: val });
       onSettingsChanged(next);
+      if (k === 'notchScale' && typeof val === 'number') {
+        getBrahmaNative()?.updateOverlayScale?.(val);
+      }
       return next;
     });
   };
 
-  const handleSaveAndVerifyKey = async () => {
-    const updated = saveBrahmaSettings(settings);
-    onSettingsChanged(updated);
-    setVerifyingKey(true);
-    setKeyStatus(null);
+  const handleSaveAssistantName = async () => {
+    const cleanName = settings.assistantName.trim() || 'ব্রহ্মা AI';
+    updateField('assistantName', cleanName);
     try {
-      const res = await verifyGeminiApiKey(settings.geminiApiKey);
-      setKeyStatus({ ok: res.ok, msg: res.message });
-    } finally {
-      setVerifyingKey(false);
+      await brahmaFetch('/api/identity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assistant: {
+            name: cleanName,
+            application_name: cleanName,
+            title: 'Android Companion',
+          },
+        }),
+      });
+    } catch {
+      // local storage already saved
     }
+    setSavedNotice(`অ্যাসিস্ট্যান্টের নতুন নাম "${cleanName}" সেভ করা হয়েছে।`);
+    window.setTimeout(() => setSavedNotice(null), 2600);
   };
 
   const handleTestServer = async () => {
     const updated = saveBrahmaSettings(settings);
     onSettingsChanged(updated);
-    setTestingServer(true);
-    setServerStatus(null);
-    try {
-      const res = await verifyServerConnection(settings.serverUrl);
-      setServerStatus({ ok: res.ok, msg: res.message });
-    } finally {
-      setTestingServer(false);
-    }
+    await checkServerStatus(settings.serverUrl);
   };
 
   const handleRequestPerm = async (key: string) => {
@@ -232,7 +247,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <span>Brahma Evo Settings & Permissions</span>
             </h2>
             <p className="text-[11px] text-slate-400">
-              API Key ভেরিফিকেশন, Android অ্যাক্সেসিবিলিটি পারমিশন ও ডাইনামিক নচ কন্ট্রোল
+              সার্ভার কানেকশন, Android অ্যাক্সেসিবিলিটি পারমিশন ও ডাইনামিক নচ কন্ট্রোল
             </p>
           </div>
           <button
@@ -249,15 +264,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div className="px-3 py-2 bg-[#090c12] border-b border-white/10 flex gap-1.5 overflow-x-auto">
           <button
             type="button"
-            onClick={() => setSubTab('api')}
+            onClick={() => {
+              setSubTab('api');
+              void checkServerStatus(settings.serverUrl);
+            }}
             className={`px-3 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap border transition cursor-pointer ${
               subTab === 'api'
                 ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
                 : 'bg-white/5 border-transparent text-slate-400 hover:text-white'
             }`}
           >
-            <KeyRound className="w-3.5 h-3.5" />
-            <span>API Key ও কানেকশন</span>
+            <Server className="w-3.5 h-3.5" />
+            <span>নাম ও সার্ভার সংযোগ</span>
           </button>
 
           <button
@@ -295,79 +313,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {/* TAB 1: API KEYS & SERVER */}
+          {/* TAB 1: API KEYS, NAME & SERVER */}
           {subTab === 'api' && (
             <div className="space-y-4">
-              {/* Gemini API Key Card */}
-              <div className="p-4 rounded-2xl bg-[#0d111a] border border-cyan-500/30 space-y-3">
+              {/* Custom Assistant Name Card */}
+              <div className="p-4 rounded-2xl bg-[#0d111a] border border-amber-500/30 space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-xs font-bold text-white uppercase tracking-wider">
-                    <KeyRound className="w-4 h-4 text-cyan-400" />
-                    <span>Gemini API Key (কথা, ভিশন ও অটোমেশন)</span>
+                    <UserCheck className="w-4 h-4 text-amber-400" />
+                    <span>অ্যাসিস্ট্যান্টের নাম পরিবর্তন (Custom Name)</span>
                   </div>
-                  {settings.geminiApiKey.trim() && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-400/30">
-                      Saved
-                    </span>
-                  )}
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-400/30">
+                    {settings.assistantName}
+                  </span>
                 </div>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  Android APK ফোনে সরাসরি অফলাইন-টু-ক্লাউড ব্রহ্মার সাথে কথা বলতে এবং সব ফিচার চালাতে আপনার Gemini API Key এখানে দিয়ে <strong>Verify</strong> করুন (শুধু আপনার ফোনেই সেভ থাকবে)।
+                <p className="text-xs text-slate-400">
+                  আপনি নিজের পছন্দমতো ওর নাম রাখতে পারেন (যেমন: ব্রহ্মা, জার্ভিস, মিত্রা, আর্য বা যেকোনো নাম)।
                 </p>
-
                 <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <input
-                      type={showKey ? 'text' : 'password'}
-                      value={settings.geminiApiKey}
-                      onChange={(e) => updateField('geminiApiKey', e.target.value)}
-                      placeholder="AIzaSy... (আপনার Gemini API Key দিন)"
-                      className="w-full bg-[#06080c] border border-white/15 focus:border-cyan-400 rounded-xl pl-3.5 pr-9 py-2.5 text-xs font-mono text-white focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowKey((s) => !s)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
-                    >
-                      {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
+                  <input
+                    type="text"
+                    value={settings.assistantName}
+                    onChange={(e) => updateField('assistantName', e.target.value)}
+                    placeholder="যেমন: ব্রহ্মা AI / আর্য / মিত্রা"
+                    className="flex-1 bg-[#06080c] border border-white/15 focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none"
+                  />
                   <button
                     type="button"
-                    onClick={() => void handleSaveAndVerifyKey()}
-                    disabled={verifyingKey}
-                    className="px-4 py-2.5 rounded-xl bg-cyan-400 hover:bg-cyan-300 disabled:opacity-50 text-[#020305] font-bold text-xs whitespace-nowrap cursor-pointer"
+                    onClick={() => void handleSaveAssistantName()}
+                    className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-[#020305] font-bold text-xs whitespace-nowrap cursor-pointer"
                   >
-                    {verifyingKey ? 'Checking...' : 'Save & Verify'}
+                    নাম সেভ করুন
                   </button>
                 </div>
-
-                {keyStatus && (
-                  <div
-                    className={`p-2.5 rounded-xl text-xs flex items-start gap-2 border ${
-                      keyStatus.ok
-                        ? 'bg-emerald-500/10 border-emerald-400/40 text-emerald-200'
-                        : 'bg-rose-500/10 border-rose-400/40 text-rose-200'
-                    }`}
-                  >
-                    {keyStatus.ok ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                    ) : (
-                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                    )}
-                    <span>{keyStatus.msg}</span>
-                  </div>
-                )}
               </div>
 
-              {/* Optional Server Backend URL */}
+              {/* Optional Server Backend URL (for Standalone Android APK) */}
               <div className="p-4 rounded-2xl bg-[#0d111a] border border-white/10 space-y-3">
                 <div className="flex items-center gap-2 text-xs font-bold text-white uppercase tracking-wider">
                   <Server className="w-4 h-4 text-emerald-400" />
-                  <span>Backend Server URL (ঐচ্ছিক — Live WS ও Remote Sync)</span>
+                  <span>Backend Server URL (Android APK রিমোট সিঙ্ক)</span>
                 </div>
                 <p className="text-xs text-slate-400">
-                  আপনার ক্লাউড সার্ভার বা লোকাল পিসির URL দিলে অ্যাপটি সরাসরি ফুল সার্ভার মোডেও কানেক্ট হবে (ফাঁকা রাখলে ফোনে সরাসরি Gemini Key দিয়েই চলবে)।
+                  ওয়েবে ব্যবহার করলে এটি ফাঁকা রাখুন। শুধুমাত্র Android APK থেকে আপনার হোস্ট করা ব্রহ্মা সার্ভারে যুক্ত হতে হলে নিচে সার্ভার URL দিন।
                 </p>
                 <div className="flex gap-2">
                   <input
@@ -386,15 +374,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     {testingServer ? 'Testing...' : 'Verify Server'}
                   </button>
                 </div>
+
                 {serverStatus && (
                   <div
-                    className={`p-2.5 rounded-xl text-xs border ${
-                      serverStatus.ok
+                    className={`p-2.5 rounded-xl text-xs flex items-start gap-2 border ${
+                      serverStatus.ok && serverStatus.geminiConfigured
                         ? 'bg-emerald-500/10 border-emerald-400/40 text-emerald-200'
                         : 'bg-amber-500/10 border-amber-400/40 text-amber-200'
                     }`}
                   >
-                    {serverStatus.msg}
+                    {serverStatus.ok && serverStatus.geminiConfigured ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    )}
+                    <span>{serverStatus.msg}</span>
                   </div>
                 )}
               </div>
@@ -521,13 +515,93 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {/* TAB 3: DYNAMIC NOTCH, MOODS & AUTOMATION */}
+          {/* TAB 3: DYNAMIC NOTCH, SIZE, SILENCE & MOODS */}
           {subTab === 'notch' && (
             <div className="space-y-4">
+              {/* Movable Cursor / Notch Size & Position Controls */}
+              <div className="p-4 rounded-2xl bg-[#0d111a] border border-cyan-500/30 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-white">
+                    <Maximize2 className="w-4 h-4 text-cyan-400" />
+                    <span>কার্সার / ডাইনামিক নচ সাইজ ও পজিশন</span>
+                  </div>
+                  <span className="text-xs font-mono text-cyan-300 font-bold">
+                    {Math.round(settings.notchScale * 100)}%
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  ডাইনামিক নচ/কার্সার আঙুল বা মাউস দিয়ে ধরে স্ক্রিনের যেকোনো কোণায় সরাতে পারবেন এবং নিচের স্লাইডার দিয়ে ছোট-বড় করতে পারবেন।
+                </p>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => updateField('notchScale', Math.max(0.55, Number((settings.notchScale - 0.08).toFixed(2))))}
+                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/15 text-xs text-white cursor-pointer"
+                  >
+                    − ছোট
+                  </button>
+                  <input
+                    type="range"
+                    min={0.55}
+                    max={1.35}
+                    step={0.03}
+                    value={settings.notchScale}
+                    onChange={(e) => updateField('notchScale', parseFloat(e.target.value))}
+                    className="flex-1 accent-cyan-400 cursor-pointer"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => updateField('notchScale', Math.min(1.35, Number((settings.notchScale + 0.08).toFixed(2))))}
+                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/15 text-xs text-white cursor-pointer"
+                  >
+                    + বড়
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => updateField('notchScale', 0.82)}
+                    className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-slate-300 cursor-pointer"
+                  >
+                    ডিফল্ট সাইজ (82%)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateField('notchPosition', null)}
+                    className="px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/35 text-[11px] text-cyan-200 inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <MapPinOff className="w-3.5 h-3.5" />
+                    <span>পজিশন রিসেট (Top Center)</span>
+                  </button>
+                </div>
+              </div>
+
               <div className="p-4 rounded-2xl bg-[#0d111a] border border-purple-500/30 space-y-3">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-white">
-                  Dynamic Notch Interactive Behaviour
+                  Voice Silence & Dynamic Notch Behaviour
                 </h3>
+
+                <label className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-[#06080c] border border-emerald-500/25 cursor-pointer">
+                  <div className="flex items-start gap-2.5">
+                    <VolumeX className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="text-xs font-semibold text-white">
+                        শুধু আমি কথা বললেই উত্তর দেবে (Silent Until You Speak)
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        চালু থাকলে নিজে থেকে একা একা কথা বলবে না — আপনি কথা বললে বা প্রশ্ন করলেই শুধু কথা বলবে, তার আগে চুপচাপ থাকবে।
+                      </div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.silentUntilUserSpeaks}
+                    onChange={(e) => updateField('silentUntilUserSpeaks', e.target.checked)}
+                    className="w-4 h-4 accent-emerald-400"
+                  />
+                </label>
 
                 <label className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-[#06080c] border border-white/10 cursor-pointer">
                   <div>
@@ -547,10 +621,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <label className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-[#06080c] border border-white/10 cursor-pointer">
                   <div>
                     <div className="text-xs font-semibold text-white">
-                      Dizzy Spin Reaction ("মাথা ঘুরছে" অনুভূতি)
+                      Dizzy Spin Reaction (চোখ ঘোরার এক্সপ্রেশন)
                     </div>
                     <div className="text-[11px] text-slate-400">
-                      স্ক্রিনে আঙুল রেখে দ্রুত গিজিমিজি/গোল করে ঘুরালে ওর মাথা ঘুরবে এবং মুখে "মাথা ঘুরছে" বলবে।
+                      স্ক্রিনে আঙুল রেখে দ্রুত গিজিমিজি করলে চোখে চক্কর দেখাবে।
                     </div>
                   </div>
                   <input

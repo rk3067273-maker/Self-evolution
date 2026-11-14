@@ -15,11 +15,13 @@ import {
   Zap,
 } from 'lucide-react';
 import type { LanguageMode, VoiceProfile } from '../types/brahma';
-import { brahmaFetch, getApiBaseUrl, isNativeApkRuntime } from '../lib/brahmaClient';
+import { brahmaFetch, getApiBaseUrl, getVoiceOption, isNativeApkRuntime } from '../lib/brahmaClient';
 
 interface LiveVisionPanelProps {
+  assistantName?: string;
   languageMode: LanguageMode;
   voiceProfile: VoiceProfile;
+  silentUntilUserSpeaks?: boolean;
 }
 
 type VisionSourceMode = 'screen' | 'camera';
@@ -54,7 +56,12 @@ function pcm16Base64ToFloat32(base64: string): Float32Array<ArrayBuffer> {
   return out;
 }
 
-export const LiveVisionPanel: React.FC<LiveVisionPanelProps> = ({ languageMode, voiceProfile }) => {
+export const LiveVisionPanel: React.FC<LiveVisionPanelProps> = ({
+  assistantName = 'ব্রহ্মা AI',
+  languageMode,
+  voiceProfile,
+  silentUntilUserSpeaks = true,
+}) => {
   const [sourceMode, setSourceMode] = useState<VisionSourceMode>('screen');
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -303,15 +310,24 @@ export const LiveVisionPanel: React.FC<LiveVisionPanelProps> = ({ languageMode, 
     }
     nextStartTimeRef.current = outputAudioCtxRef.current.currentTime;
 
-    const voiceParam = voiceProfile === 'commanding' ? 'Fenrir' : 'Charon';
+    const voiceOpt = getVoiceOption(voiceProfile);
+    const voiceParam = voiceOpt.geminiVoice;
     const configuredBase = getApiBaseUrl();
 
-    // Standalone Android APK mode without backend server: stream camera frames via on-device Gemini API
+    // Standalone Android APK mode without backend server: silent monitoring unless user taps Deep HD Scan or silentUntilUserSpeaks is off
     if (isNativeApkRuntime() && !configuredBase) {
       setIsConnecting(false);
       setIsStreaming(true);
       isStreamingRef.current = true;
-      setStatusNote('Android Standalone Live Vision চালু (On-Device Gemini Frame Stream)');
+
+      if (silentUntilUserSpeaks) {
+        setStatusNote(
+          `${assistantName} চুপচাপ দেখছে — আপনি চাইলে "Deep HD Frame Scan" চাপুন বা প্রশ্ন করুন`
+        );
+        return;
+      }
+
+      setStatusNote('Android ক্যামেরা প্রিভিউ চালু — লাইভ AI ভিশনের জন্য Settings থেকে Server URL সংযোগ করুন');
 
       frameIntervalRef.current = window.setInterval(() => {
         const video = videoRef.current;
@@ -337,7 +353,9 @@ export const LiveVisionPanel: React.FC<LiveVisionPanelProps> = ({ languageMode, 
     const wsProto = wsTarget.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${wsProto}//${wsTarget.host}/ws/live-vision?lang=${encodeURIComponent(
       languageMode === 'auto' ? 'bn' : languageMode
-    )}&voice=${encodeURIComponent(voiceParam)}`;
+    )}&voice=${encodeURIComponent(voiceParam)}&name=${encodeURIComponent(
+      assistantName
+    )}&silent=${silentUntilUserSpeaks ? 'true' : 'false'}`;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -691,7 +709,7 @@ export const LiveVisionPanel: React.FC<LiveVisionPanelProps> = ({ languageMode, 
               লাইভ ভিশন কথোপকথন (24kHz Deep Voice)
             </span>
             <span className="text-[10px] font-mono text-emerald-400">
-              {voiceProfile === 'commanding' ? 'FENRIR' : 'CHARON'}
+              {getVoiceOption(voiceProfile).geminiVoice.toUpperCase()}
             </span>
           </div>
 
@@ -729,7 +747,7 @@ export const LiveVisionPanel: React.FC<LiveVisionPanelProps> = ({ languageMode, 
                 >
                   <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
                     <span className="font-bold uppercase tracking-wider">
-                      {t.role === 'user' ? 'আপনি' : 'ব্রহ্মা লাইভ ভিশন'}
+                      {t.role === 'user' ? 'আপনি' : `${assistantName} লাইভ ভিশন`}
                     </span>
                     <span className="font-mono">{t.time}</span>
                   </div>

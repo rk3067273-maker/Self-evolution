@@ -20,7 +20,16 @@ export type OrbState =
   | 'SCANNING';
 
 export type LanguageMode = 'auto' | 'bn' | 'hi' | 'en';
-export type VoiceProfile = 'deep-voinkor' | 'commanding' | 'calm-deep';
+export type VoiceGender = 'male' | 'female';
+export type VoiceProfile =
+  | 'male-deep-hard'
+  | 'male-commanding'
+  | 'male-soft-warm'
+  | 'male-gentle'
+  | 'female-deep-hard'
+  | 'female-commanding'
+  | 'female-soft-sweet'
+  | 'female-warm-calm';
 
 export interface ChatMessage {
   id: string;
