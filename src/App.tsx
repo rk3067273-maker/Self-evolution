@@ -35,7 +35,7 @@ import { SkillForgePanel } from './components/SkillForgePanel';
 import { SmartHomeAndOfficePanel } from './components/SmartHomeAndOfficePanel';
 import { RemoteAndIdentityPanel } from './components/RemoteAndIdentityPanel';
 import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
-import { SettingsModal } from './components/SettingsModal';
+import { SettingsModal, type SettingsTabId } from './components/SettingsModal';
 import {
   autoDiscoverApkServer,
   brahmaFetch,
@@ -82,7 +82,7 @@ export default function App() {
   const [voiceLevel, setVoiceLevel] = useState<number>(0.06);
   const [popupVisible, setPopupVisible] = useState<boolean>(false);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
-  const [settingsInitialTab, setSettingsInitialTab] = useState<'api' | 'permissions' | 'notch'>('api');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId>('api');
   const [forcedNotchMood, setForcedNotchMood] = useState<{ mood: NotchMood; ts: number } | null>(null);
   const [terminalState, setTerminalState] = useState<TerminalState>({
     running: false,
@@ -328,6 +328,107 @@ export default function App() {
     [languageMode, voiceProfile]
   );
 
+  const playAudioBase64Immediate = useCallback(
+    async (
+      audioBase64: string,
+      mimeType: string,
+      cleanFallbackText: string,
+      onStart?: () => void,
+      onEnd?: () => void,
+      onLevel?: (lvl: number) => void
+    ) => {
+      stopSpeaking();
+      const ctx = unlockAudioPlayback();
+
+      if (ctx) {
+        try {
+          if (ctx.state === 'suspended') {
+            await ctx.resume();
+          }
+          const bin = atob(audioBase64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const audioBuffer = await ctx.decodeAudioData(bytes.buffer.slice(0));
+
+          const source = ctx.createBufferSource();
+          source.buffer = audioBuffer;
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 128;
+          source.connect(analyser);
+          analyser.connect(ctx.destination);
+          audioSourceRef.current = source;
+
+          const freqData = new Uint8Array(analyser.frequencyBinCount);
+          let smoothedLvl = 0.25;
+          setOrbState('SPEAKING');
+          onStart?.();
+          levelIntervalRef.current = window.setInterval(() => {
+            analyser.getByteFrequencyData(freqData);
+            let sum = 0;
+            for (let i = 0; i < freqData.length; i++) sum += freqData[i];
+            const rawLvl = Math.min(1, Math.max(0.14, sum / freqData.length / 115));
+            smoothedLvl = smoothedLvl * 0.42 + rawLvl * 0.58;
+            setVoiceLevel(smoothedLvl);
+            onLevel?.(smoothedLvl);
+          }, 34);
+
+          await new Promise<void>((resolve) => {
+            source.onended = () => {
+              window.clearInterval(levelIntervalRef.current);
+              audioSourceRef.current = null;
+              setVoiceLevel(0.05);
+              onLevel?.(0.05);
+              setOrbState('ONLINE');
+              onEnd?.();
+              resolve();
+            };
+            source.start(0);
+          });
+          return;
+        } catch {
+          // fall through to HTMLAudio element fallback
+        }
+      }
+
+      const audio = new Audio(`data:${mimeType || 'audio/wav'};base64,${audioBase64}`);
+      currentAudioRef.current = audio;
+
+      audio.onplay = () => {
+        setOrbState('SPEAKING');
+        onStart?.();
+        levelIntervalRef.current = window.setInterval(() => {
+          const lvl = 0.34 + Math.random() * 0.58;
+          setVoiceLevel(lvl);
+          onLevel?.(lvl);
+        }, 50);
+      };
+
+      await new Promise<void>((resolve) => {
+        audio.onended = () => {
+          window.clearInterval(levelIntervalRef.current);
+          setVoiceLevel(0.05);
+          onLevel?.(0.05);
+          setOrbState('ONLINE');
+          onEnd?.();
+          resolve();
+        };
+        audio.onerror = () => {
+          window.clearInterval(levelIntervalRef.current);
+          setVoiceLevel(0.05);
+          onLevel?.(0.05);
+          setOrbState('ONLINE');
+          onEnd?.();
+          resolve();
+        };
+        audio.play().catch(() => {
+          window.clearInterval(levelIntervalRef.current);
+          void speakWithDeviceTts(cleanFallbackText, onStart, onEnd, onLevel).then(resolve);
+        });
+      });
+    },
+    [speakWithDeviceTts, stopSpeaking, unlockAudioPlayback]
+  );
+
   const speakDeepVoice = useCallback(
     async (
       text: string,
@@ -342,18 +443,23 @@ export default function App() {
         return;
       }
 
-      const ctx = unlockAudioPlayback();
+      unlockAudioPlayback();
+
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timeoutId = controller ? window.setTimeout(() => controller.abort(), 4200) : 0;
 
       try {
         const res = await brahmaFetch('/api/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller?.signal,
           body: JSON.stringify({
             text: clean,
             voiceProfile,
             languageMode,
           }),
         });
+        if (timeoutId) window.clearTimeout(timeoutId);
         const raw = await res.text();
         let data: { useNativeTts?: boolean; audioBase64?: string; mimeType?: string } = {};
         try {
@@ -366,95 +472,20 @@ export default function App() {
           return;
         }
 
-        // Primary: Play Gemini 3.8 WAV via unlocked Web AudioContext (bypasses async HTMLAudio blocks on Android Chrome)
-        if (ctx) {
-          try {
-            if (ctx.state === 'suspended') {
-              await ctx.resume();
-            }
-            const bin = atob(data.audioBase64);
-            const bytes = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-            const audioBuffer = await ctx.decodeAudioData(bytes.buffer.slice(0));
-
-            const source = ctx.createBufferSource();
-            source.buffer = audioBuffer;
-            const analyser = ctx.createAnalyser();
-            analyser.fftSize = 128;
-            source.connect(analyser);
-            analyser.connect(ctx.destination);
-            audioSourceRef.current = source;
-
-            const freqData = new Uint8Array(analyser.frequencyBinCount);
-            setOrbState('SPEAKING');
-            onStart?.();
-            levelIntervalRef.current = window.setInterval(() => {
-              analyser.getByteFrequencyData(freqData);
-              let sum = 0;
-              for (let i = 0; i < freqData.length; i++) sum += freqData[i];
-              const lvl = Math.min(1, Math.max(0.18, sum / freqData.length / 135));
-              setVoiceLevel(lvl);
-              onLevel?.(lvl);
-            }, 60);
-
-            await new Promise<void>((resolve) => {
-              source.onended = () => {
-                window.clearInterval(levelIntervalRef.current);
-                audioSourceRef.current = null;
-                setVoiceLevel(0.05);
-                onLevel?.(0.05);
-                setOrbState('ONLINE');
-                onEnd?.();
-                resolve();
-              };
-              source.start(0);
-            });
-            return;
-          } catch {
-            // fall through to HTMLAudio element fallback
-          }
-        }
-
-        const audio = new Audio(`data:${data.mimeType || 'audio/wav'};base64,${data.audioBase64}`);
-        currentAudioRef.current = audio;
-
-        audio.onplay = () => {
-          setOrbState('SPEAKING');
-          onStart?.();
-          levelIntervalRef.current = window.setInterval(() => {
-            const lvl = 0.32 + Math.random() * 0.58;
-            setVoiceLevel(lvl);
-            onLevel?.(lvl);
-          }, 75);
-        };
-
-        await new Promise<void>((resolve) => {
-          audio.onended = () => {
-            window.clearInterval(levelIntervalRef.current);
-            setVoiceLevel(0.05);
-            onLevel?.(0.05);
-            setOrbState('ONLINE');
-            onEnd?.();
-            resolve();
-          };
-          audio.onerror = () => {
-            window.clearInterval(levelIntervalRef.current);
-            setVoiceLevel(0.05);
-            onLevel?.(0.05);
-            setOrbState('ONLINE');
-            onEnd?.();
-            resolve();
-          };
-          audio.play().catch(() => {
-            window.clearInterval(levelIntervalRef.current);
-            void speakWithDeviceTts(clean, onStart, onEnd, onLevel).then(resolve);
-          });
-        });
+        await playAudioBase64Immediate(
+          data.audioBase64,
+          data.mimeType || 'audio/wav',
+          clean,
+          onStart,
+          onEnd,
+          onLevel
+        );
       } catch {
+        if (timeoutId) window.clearTimeout(timeoutId);
         await speakWithDeviceTts(clean, onStart, onEnd, onLevel);
       }
     },
-    [languageMode, speakWithDeviceTts, stopSpeaking, unlockAudioPlayback, voiceProfile]
+    [languageMode, playAudioBase64Immediate, speakWithDeviceTts, stopSpeaking, unlockAudioPlayback, voiceProfile]
   );
 
   const handleSendMessage = useCallback(
@@ -477,6 +508,7 @@ export default function App() {
       setOrbState('THINKING');
 
       try {
+        const wantsInlineAudio = autoSpeakReply && !skipAutoSpeak;
         const res = await brahmaFetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -484,15 +516,19 @@ export default function App() {
             message: text,
             languageMode,
             assistantName: appSettings.assistantName,
+            voiceProfile,
+            withAudio: wantsInlineAudio,
             imageBase64,
             imageMimeType,
-            history: messages.slice(-8).map((m) => ({ role: m.role, text: m.text })),
+            history: messages.slice(-6).map((m) => ({ role: m.role, text: m.text })),
           }),
         });
         const rawBody = await res.text();
         let data: {
           reply?: string;
           error?: string;
+          audioBase64?: string;
+          audioMimeType?: string;
           popupAction?: 'show' | 'hide';
           moduleToOpen?: string;
           toolPayload?: unknown;
@@ -549,8 +585,16 @@ export default function App() {
         };
         setMessages((prev) => [...prev, aiMsg]);
 
-        if (autoSpeakReply && !skipAutoSpeak && res.ok) {
-          void speakDeepVoice(replyText);
+        if (wantsInlineAudio && res.ok) {
+          if (data.audioBase64) {
+            void playAudioBase64Immediate(
+              data.audioBase64,
+              data.audioMimeType || 'audio/wav',
+              replyText
+            );
+          } else {
+            void speakDeepVoice(replyText);
+          }
         } else {
           window.setTimeout(() => setOrbState('ONLINE'), 2000);
         }
@@ -572,7 +616,18 @@ export default function App() {
         setIsThinking(false);
       }
     },
-    [appSettings.assistantName, autoSpeakReply, languageMode, messages, refreshBriefing, refreshTerminalState, speakDeepVoice, unlockAudioPlayback]
+    [
+      appSettings.assistantName,
+      autoSpeakReply,
+      languageMode,
+      messages,
+      playAudioBase64Immediate,
+      refreshBriefing,
+      refreshTerminalState,
+      speakDeepVoice,
+      unlockAudioPlayback,
+      voiceProfile,
+    ]
   );
 
   return (

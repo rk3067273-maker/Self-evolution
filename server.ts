@@ -8,7 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { WebSocketServer, WebSocket } from 'ws';
-import { GoogleGenAI, LiveServerMessage, Modality, Type } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, Modality, ThinkingLevel, Type } from '@google/genai';
 
 dotenv.config();
 
@@ -23,17 +23,202 @@ function getServerGeminiKey(): string {
   return key;
 }
 
+let cachedGeminiKey = '';
+let cachedGeminiClient: GoogleGenAI | null = null;
+let cachedGeminiAlphaClient: GoogleGenAI | null = null;
+
 function getGeminiClient(): GoogleGenAI | null {
   const apiKey = getServerGeminiKey();
   if (!apiKey) return null;
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
+  if (!cachedGeminiClient || cachedGeminiKey !== apiKey) {
+    cachedGeminiKey = apiKey;
+    cachedGeminiClient = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
       },
+    });
+    cachedGeminiAlphaClient = new GoogleGenAI({
+      apiKey,
+      apiVersion: 'v1alpha',
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+  }
+  return cachedGeminiClient;
+}
+
+function getGeminiAlphaClient(): GoogleGenAI | null {
+  getGeminiClient();
+  return cachedGeminiAlphaClient;
+}
+
+interface CachedTtsEntry {
+  audioBase64: string;
+  mimeType: string;
+  voiceName: string;
+  modelUsed: string;
+}
+
+const ttsAudioCache = new Map<string, CachedTtsEntry>();
+
+function cleanTextForSpeech(rawText: string): string {
+  return rawText
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/[*_`#>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 1200);
+}
+
+async function synthesizeBrahmaSpeech(
+  rawText: string,
+  voiceProfile: string,
+  languageMode: string
+): Promise<CachedTtsEntry> {
+  const ai = getGeminiClient();
+  if (!ai) {
+    throw new Error('GEMINI_API_KEY is required for Gemini Neural TTS.');
+  }
+
+  const cleanText = cleanTextForSpeech(rawText);
+  if (!cleanText) {
+    throw new Error('Text is required for speech synthesis.');
+  }
+
+  const cacheKey = `${voiceProfile}::${languageMode}::${cleanText}`;
+  const cached = ttsAudioCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const hasBengali = /[\u0980-\u09FF]/.test(cleanText);
+  const hasHindi = /[\u0900-\u097F]/.test(cleanText);
+  const langDesc =
+    languageMode === 'bn' || hasBengali
+      ? 'pure native Bengali (Bangla)'
+      : languageMode === 'hi' || hasHindi
+        ? 'pure native Hindi'
+        : 'natural authoritative speech';
+
+  const styleMap: Record<string, { voice: string; style: string }> = {
+    'male-deep-hard': {
+      voice: 'Charon',
+      style: `Real adult native ${langDesc} man with a deep, firm, resonant baritone voice and zero English accent.`,
     },
-  });
+    'male-commanding': {
+      voice: 'Fenrir',
+      style: `Strong, commanding native ${langDesc} man with a crisp baritone voice and zero foreign accent.`,
+    },
+    'male-soft-warm': {
+      voice: 'Puck',
+      style: `Warm, soft-spoken native ${langDesc} man having a natural everyday human conversation.`,
+    },
+    'male-gentle': {
+      voice: 'Charon',
+      style: `Calm, respectful, gentle-voiced native ${langDesc} man with natural cadence.`,
+    },
+    'female-deep-hard': {
+      voice: 'Kore',
+      style: `Real adult native ${langDesc} woman with a deep, firm, resonant alto voice and pure native pronunciation.`,
+    },
+    'female-commanding': {
+      voice: 'Kore',
+      style: `Bold, assertive native ${langDesc} woman with a crisp, confident voice and native pacing.`,
+    },
+    'female-soft-sweet': {
+      voice: 'Zephyr',
+      style: `Warm, gentle, soft-spoken native ${langDesc} woman with sweet conversational cadence.`,
+    },
+    'female-warm-calm': {
+      voice: 'Zephyr',
+      style: `Calm, friendly native ${langDesc} woman speaking naturally in everyday ${langDesc}.`,
+    },
+    'deep-voinkor': {
+      voice: 'Charon',
+      style: `Real adult native ${langDesc} man with a deep, firm baritone voice and pure native pronunciation.`,
+    },
+    commanding: {
+      voice: 'Fenrir',
+      style: `Deep, strong, commanding native ${langDesc} male baritone voice.`,
+    },
+    'calm-deep': {
+      voice: 'Puck',
+      style: `Soft, warm, natural native ${langDesc} male voice.`,
+    },
+  };
+
+  const chosen = styleMap[voiceProfile] || styleMap['male-deep-hard'];
+  const aiAlpha = getGeminiAlphaClient() || ai;
+
+  // Low-latency flash-lite-tts FIRST for instant voice response
+  const attempts: Array<{ client: GoogleGenAI; model: string; useStyle: boolean }> = [
+    { client: ai, model: 'gemini-3.8-flash-lite-tts', useStyle: true },
+    { client: ai, model: 'gemini-3.8-flash-lite-tts', useStyle: false },
+    { client: ai, model: 'gemini-3.8-flash-tts', useStyle: true },
+    { client: aiAlpha, model: 'gemini-3.8-flash-lite-tts', useStyle: false },
+  ];
+
+  let lastErr = 'No TTS attempt succeeded';
+  for (const attempt of attempts) {
+    try {
+      const partPayload: Record<string, unknown> = { text: cleanText };
+      if (attempt.useStyle) {
+        partPayload.speechMetadata = {
+          style: `${chosen.style} Natural human breath pauses, zero robotic monotony.`,
+        };
+      }
+
+      const response = await attempt.client.models.generateContent({
+        model: attempt.model,
+        contents: [
+          {
+            role: 'user',
+            parts: [partPayload],
+          },
+        ],
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName: chosen.voice,
+              },
+            },
+          },
+        },
+      });
+
+      const parts = response.candidates?.[0]?.content?.parts ?? [];
+      const audioPart = parts.find((p) => p?.inlineData?.data);
+      const base64Audio = audioPart?.inlineData?.data;
+      if (base64Audio) {
+        const entry: CachedTtsEntry = {
+          audioBase64: base64Audio,
+          mimeType: audioPart?.inlineData?.mimeType || 'audio/wav',
+          voiceName: chosen.voice,
+          modelUsed: attempt.model,
+        };
+        if (cleanText.length <= 420) {
+          if (ttsAudioCache.size >= 120) {
+            const oldestKey = ttsAudioCache.keys().next().value;
+            if (oldestKey) ttsAudioCache.delete(oldestKey);
+          }
+          ttsAudioCache.set(cacheKey, entry);
+        }
+        return entry;
+      }
+    } catch (err: unknown) {
+      lastErr = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  throw new Error(lastErr);
 }
 
 // ---------------------------------------------------------------------------
@@ -1206,7 +1391,7 @@ async function startServer() {
       geminiConfigured: Boolean(getGeminiClient()),
       models: {
         chat: 'gemini-4-hydrogen',
-        tts: 'gemini-3.8-flash-tts',
+        tts: 'gemini-3.8-flash-lite-tts',
         live: 'gemini-3.8-live',
         transcribe: 'gemini-3.5-transcribe',
       },
@@ -1226,10 +1411,38 @@ async function startServer() {
     const history = Array.isArray(req.body?.history) ? req.body.history : [];
     const imageBase64 = req.body?.imageBase64 ? String(req.body.imageBase64) : null;
     const imageMimeType = req.body?.imageMimeType ? String(req.body.imageMimeType) : 'image/png';
+    const withAudio = Boolean(req.body?.withAudio);
+    const voiceProfile = String(req.body?.voiceProfile || 'male-deep-hard');
 
     if (!message && !imageBase64) {
       return res.status(400).json({ error: 'Message or image input is required.' });
     }
+
+    const sendChatWithOptionalAudio = async (payload: Record<string, unknown>) => {
+      const replyStr = typeof payload.reply === 'string' ? payload.reply : '';
+      if (withAudio && replyStr && replyStr.length <= 480 && getGeminiClient()) {
+        try {
+          const audio = await Promise.race([
+            synthesizeBrahmaSpeech(replyStr, voiceProfile, languageMode),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 3400)),
+          ]);
+          if (audio) {
+            return res.json({
+              ...payload,
+              audioBase64: audio.audioBase64,
+              audioMimeType: audio.mimeType,
+              latencyMs: Date.now() - start,
+            });
+          }
+        } catch {
+          // return text immediately; client can synthesize fallback if needed
+        }
+      }
+      return res.json({
+        ...payload,
+        latencyMs: Date.now() - start,
+      });
+    };
 
     const lower = message.toLowerCase();
 
@@ -1340,13 +1553,12 @@ async function startServer() {
               ? `Loaded holographic schematic: **${preset.title}**. Opening Circuit Assembler HUD with pin-to-pin wiring and voltage safety checks.`
               : `হোলোগ্রাফিক সার্কিট ডায়াগ্রাম লোড করা হয়েছে: **${preset.title}**। পিন-টু-পিন ওয়্যারিং ও ভোল্টেজ সতর্কতাসহ সার্কিট হাব চালু করা হলো।`;
 
-        return res.json({
+        return sendChatWithOptionalAudio({
           tier: 1,
           intent: 'circuit_assembler',
           moduleToOpen: 'circuit',
           toolPayload: preset,
           orbState: 'EXECUTING',
-          latencyMs: Date.now() - start,
           reply,
         });
       }
@@ -1374,13 +1586,12 @@ async function startServer() {
               ? `Routing telemetry to **HoloGlobe 3D Earth**. Executing geospatial command: "${message}".`
               : `হোলোগ্লোব থ্রি-ডি আর্থ টেলিমেট্রি সক্রিয় করা হয়েছে। আপনার নির্দেশ অনুযায়ী মানচিত্র আপডেট করা হচ্ছে।`;
 
-        return res.json({
+        return sendChatWithOptionalAudio({
           tier: 1,
           intent: 'holo_globe',
           moduleToOpen: 'globe',
           toolPayload: globeAction,
           orbState: 'SCANNING',
-          latencyMs: Date.now() - start,
           reply,
         });
       }
@@ -1406,13 +1617,12 @@ async function startServer() {
                 : languageMode === 'en'
                   ? `Smart Home Mesh updated: **${matched.name}** (${matched.room}) is now **${matched.power ? 'ONLINE' : 'OFF'}**.`
                   : `স্মার্ট হোম নির্দেশ কার্যকর হয়েছে: **${matched.name}** এখন **${matched.power ? 'চালু' : 'বন্ধ'}** করা হয়েছে।`;
-            return res.json({
+            return sendChatWithOptionalAudio({
               tier: 1,
               intent: 'smart_home',
               moduleToOpen: 'smart-office',
               toolPayload: { device: matched },
               orbState: 'EXECUTING',
-              latencyMs: Date.now() - start,
               reply,
             });
           }
@@ -1445,13 +1655,12 @@ async function startServer() {
                 : languageMode === 'en'
                   ? `Executed Evolved Skill **${sk.name} (${sk.version})**:\n\n${exec.output}`
                   : `স্বয়ংক্রিয় স্কিল **${sk.name} (${sk.version})** সফলভাবে চালানো হয়েছে:\n\n${exec.output}`;
-            return res.json({
+            return sendChatWithOptionalAudio({
               tier: 1,
               intent: 'evolved_skill',
               moduleToOpen: 'skills',
               toolPayload: { skillId: sk.id, skillName: sk.name, version: sk.version, output: exec.output },
               orbState: 'EXECUTING',
-              latencyMs: Date.now() - start,
               reply,
             });
           }
@@ -1467,12 +1676,11 @@ async function startServer() {
         cached.reply &&
         !/^নির্দেশ (সম্পন্ন|সম্পূর্ণ) হয়েছে[।.]?$/.test(cached.reply.trim())
       ) {
-        return res.json({
+        return sendChatWithOptionalAudio({
           tier: 2,
           intent: cached.intent,
           moduleToOpen: cached.moduleToOpen,
           orbState: 'SPEAKING',
-          latencyMs: Date.now() - start,
           reply: cached.reply,
         });
       }
@@ -1523,14 +1731,16 @@ async function startServer() {
               ? 'Reply clearly, warmly, and naturally like a real human conversational partner in English.'
               : 'LANGUAGE ADAPTATION RULE: Detect the user language automatically. If the user writes or speaks in Bengali or Banglish, reply strictly in pure, natural conversational Bengali script (বাংলা). If the user writes or speaks in Hindi or Hinglish, reply strictly in pure, natural conversational Hindi Devanagari script (हिन्दी). Keep tone genuinely human.';
 
-      const systemPrompt = `You are ${activeAssistantName}, an intelligent, perceptive, genuinely human-like AI companion. Always refer to yourself as "${activeAssistantName}" when asked your name.
+      const wantsDetailed =
+        /(code|script|program|essay|step by step|explain in detail|list|table|কোড|বিস্তারিত|লিস্ট|विस्तार)/i.test(lower);
+
+      const systemPrompt = `You are ${activeAssistantName}, an intelligent, warm, human-like AI companion. Always call yourself "${activeAssistantName}".
 Owner: ${identityState.owner.preferred_name} (${identityState.owner.location}).
-Persona: Expressive, warm, attentive, thoughtful, and natural — never give generic robotic one-liners. Engage meaningfully with whatever the user asks or says.
 ${langDirective}
-Keep voice-ready replies natural like spoken human conversation, and free of raw markdown symbols unless structured lists are explicitly requested.`;
+${wantsDetailed ? 'Provide a clear, thorough answer.' : 'Keep conversational voice replies natural, crisp, and concise (1 to 3 short spoken sentences) with no raw markdown symbols.'}`;
 
       const contents: Array<Record<string, unknown>> = [];
-      for (const h of history.slice(-8)) {
+      for (const h of history.slice(-6)) {
         if (h?.text) {
           contents.push({
             role: h.role === 'user' ? 'user' : 'model',
@@ -1553,14 +1763,26 @@ Keep voice-ready replies natural like spoken human conversation, and free of raw
 
       let reply = '';
       let primaryErr = '';
+      const useUltraFastPrimary = !wantsDetailed && !imageBase64;
+      const primaryModel = useUltraFastPrimary ? 'gemini-3.1-flash-lite' : 'gemini-4-hydrogen';
+      const primaryThinking = useUltraFastPrimary ? ThinkingLevel.MINIMAL : ThinkingLevel.LOW;
+      const fallbackModel = useUltraFastPrimary ? 'gemini-4-hydrogen' : 'gemini-3.1-flash-lite';
+      const fallbackThinking = useUltraFastPrimary ? ThinkingLevel.LOW : ThinkingLevel.MINIMAL;
+
       try {
-        const primaryResp = await ai.models.generateContent({
-          model: 'gemini-4-hydrogen',
-          contents,
-          config: {
-            systemInstruction: systemPrompt,
-          },
-        });
+        const primaryResp = await Promise.race([
+          ai.models.generateContent({
+            model: primaryModel,
+            contents,
+            config: {
+              systemInstruction: systemPrompt,
+              thinkingConfig: { thinkingLevel: primaryThinking },
+            },
+          }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`${primaryModel} timed out after 7000ms`)), 7000)
+          ),
+        ]);
         reply = extractReplyText(primaryResp);
       } catch (err: unknown) {
         primaryErr = err instanceof Error ? err.message : String(err);
@@ -1568,10 +1790,11 @@ Keep voice-ready replies natural like spoken human conversation, and free of raw
 
       if (!reply) {
         const fallbackResp = await ai.models.generateContent({
-          model: 'gemini-3.1-flash-lite',
+          model: fallbackModel,
           contents,
           config: {
             systemInstruction: systemPrompt,
+            thinkingConfig: { thinkingLevel: fallbackThinking },
           },
         });
         reply = extractReplyText(fallbackResp);
@@ -1598,11 +1821,10 @@ Keep voice-ready replies natural like spoken human conversation, and free of raw
       });
       if (remoteLogs.length > 35) remoteLogs.pop();
 
-      return res.json({
+      return sendChatWithOptionalAudio({
         tier: 3,
         intent: 'general_conversation',
         orbState: 'SPEAKING',
-        latencyMs: Date.now() - start,
         reply,
       });
     } catch (err: unknown) {
@@ -1612,159 +1834,29 @@ Keep voice-ready replies natural like spoken human conversation, and free of raw
   });
 
   // -------------------------------------------------------------------------
-  // 2. Deep Formidable Native Multilingual TTS (Gemini 3.8 TTS)
+  // 2. Deep Formidable Native Multilingual TTS (Gemini 3.8 Flash Lite TTS Priority)
   // -------------------------------------------------------------------------
   app.post('/api/tts', async (req, res) => {
     const rawText = String(req.body?.text || '').trim();
-    const voiceProfile = String(req.body?.voiceProfile || 'deep-voinkor');
+    const voiceProfile = String(req.body?.voiceProfile || 'male-deep-hard');
     const languageMode = String(req.body?.languageMode || 'auto');
 
     if (!rawText) {
       return res.status(400).json({ error: 'Text is required for speech synthesis.' });
     }
 
-    const ai = getGeminiClient();
-    if (!ai) {
+    if (!getGeminiClient()) {
       return res.status(503).json({ error: 'GEMINI_API_KEY is required for Gemini Neural TTS.' });
     }
 
-    // Strip markdown artifacts so TTS speaks clean prose
-    const cleanText = rawText
-      .replace(/```[\s\S]*?```/g, '')
-      .replace(/[*_`#>]/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 1200);
-
-    const hasBengali = /[\u0980-\u09FF]/.test(cleanText);
-    const hasHindi = /[\u0900-\u097F]/.test(cleanText);
-    const langDesc =
-      languageMode === 'bn' || hasBengali
-        ? 'pure native Bengali (Bangla)'
-        : languageMode === 'hi' || hasHindi
-          ? 'pure native Hindi'
-          : 'natural authoritative speech';
-
-    const styleMap: Record<string, { voice: string; style: string }> = {
-      'male-deep-hard': {
-        voice: 'Charon',
-        style: `Speak like a real adult native ${langDesc} man with a very deep, heavy, resonant, firm baritone voice. Use natural human pauses, authentic South Asian ${langDesc} phonology, and crisp articulation with zero English or Western accent.`,
-      },
-      'male-commanding': {
-        voice: 'Fenrir',
-        style: `Speak like a strong, serious, commanding native ${langDesc} man with a hard, gravelly baritone voice. Completely natural native rhythm and zero English accent.`,
-      },
-      'male-soft-warm': {
-        voice: 'Puck',
-        style: `Speak like a kind, warm, soft-spoken native ${langDesc} man having a natural human conversation. Gentle, soothing, everyday ${langDesc} cadence with zero foreign accent.`,
-      },
-      'male-gentle': {
-        voice: 'Charon',
-        style: `Speak like a calm, respectful, gentle-voiced native ${langDesc} man with a soft, relaxed, natural human tone and pure native pronunciation.`,
-      },
-      'female-deep-hard': {
-        voice: 'Kore',
-        style: `Speak like a real adult native ${langDesc} woman with a deep, resonant, firm, serious alto voice. Authentic native South Asian ${langDesc} pronunciation and natural human expression with zero English accent.`,
-      },
-      'female-commanding': {
-        voice: 'Kore',
-        style: `Speak like a bold, confident, assertive native ${langDesc} woman with a strong, crisp, hard-edged voice. 100% pure native ${langDesc} accent and natural human pacing.`,
-      },
-      'female-soft-sweet': {
-        voice: 'Zephyr',
-        style: `Speak like a warm, gentle, soft-spoken native ${langDesc} woman with a sweet, natural, human conversational voice. Pure native South Asian ${langDesc} intonation with zero English drawl.`,
-      },
-      'female-warm-calm': {
-        voice: 'Zephyr',
-        style: `Speak like a calm, friendly, soft-hearted native ${langDesc} woman speaking naturally in everyday ${langDesc}. Warm human rhythm and zero English accent.`,
-      },
-      // Legacy aliases
-      'deep-voinkor': {
-        voice: 'Charon',
-        style: `Speak like a real adult native ${langDesc} man with a very deep, firm baritone voice and 100% pure native pronunciation with zero English accent.`,
-      },
-      commanding: {
-        voice: 'Fenrir',
-        style: `Deep, strong, commanding native ${langDesc} male baritone voice with zero foreign accent.`,
-      },
-      'calm-deep': {
-        voice: 'Puck',
-        style: `Soft, warm, natural native ${langDesc} male voice with zero English accent.`,
-      },
-    };
-
-    const chosen = styleMap[voiceProfile] || styleMap['male-deep-hard'];
-
-    const aiAlpha = new GoogleGenAI({
-      apiKey: getServerGeminiKey(),
-      apiVersion: 'v1alpha',
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
-
-    const attempts: Array<{ client: GoogleGenAI; model: string; useSpeechConfig: boolean; useStyle: boolean }> = [
-      { client: ai, model: 'gemini-3.8-flash-tts', useSpeechConfig: true, useStyle: true },
-      { client: ai, model: 'gemini-3.8-flash-lite-tts', useSpeechConfig: true, useStyle: true },
-      { client: aiAlpha, model: 'gemini-3.8-flash-tts', useSpeechConfig: true, useStyle: true },
-      { client: aiAlpha, model: 'gemini-3.8-flash-lite-tts', useSpeechConfig: true, useStyle: true },
-      { client: ai, model: 'gemini-3.8-flash-lite-tts', useSpeechConfig: true, useStyle: false },
-    ];
-
-    let lastErr = 'No TTS attempt succeeded';
-    for (const attempt of attempts) {
-      try {
-        const config: Record<string, unknown> = {
-          responseModalities: ['AUDIO'],
-        };
-        if (attempt.useSpeechConfig) {
-          config.speechConfig = {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName: chosen.voice,
-              },
-            },
-          };
-        }
-
-        const partPayload: Record<string, unknown> = { text: cleanText };
-        if (attempt.useStyle) {
-          partPayload.speechMetadata = {
-            style: `${chosen.style} Sound genuinely human with natural breath pauses, emotional inflection, and zero robotic monotony.`,
-          };
-        }
-
-        const response = await attempt.client.models.generateContent({
-          model: attempt.model,
-          contents: [
-            {
-              role: 'user',
-              parts: [partPayload],
-            },
-          ],
-          config,
-        });
-
-        const parts = response.candidates?.[0]?.content?.parts ?? [];
-        const audioPart = parts.find((p) => p?.inlineData?.data);
-        const base64Audio = audioPart?.inlineData?.data;
-        if (base64Audio) {
-          return res.json({
-            audioBase64: base64Audio,
-            mimeType: audioPart?.inlineData?.mimeType || 'audio/wav',
-            voiceName: chosen.voice,
-            modelUsed: attempt.model,
-          });
-        }
-      } catch (err: unknown) {
-        lastErr = err instanceof Error ? err.message : String(err);
-      }
+    try {
+      const result = await synthesizeBrahmaSpeech(rawText, voiceProfile, languageMode);
+      return res.json(result);
+    } catch (err: unknown) {
+      const lastErr = err instanceof Error ? err.message : String(err);
+      console.error('[Brahma /api/tts] All attempts failed:', lastErr);
+      return res.status(500).json({ error: `Gemini TTS failed: ${lastErr}` });
     }
-
-    console.error('[Brahma /api/tts] All attempts failed:', lastErr);
-    return res.status(500).json({ error: `Gemini TTS failed: ${lastErr}` });
   });
 
   // -------------------------------------------------------------------------

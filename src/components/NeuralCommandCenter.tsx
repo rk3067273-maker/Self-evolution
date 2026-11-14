@@ -65,6 +65,7 @@ export const NeuralCommandCenter: React.FC<NeuralCommandCenterProps> = ({
     mimeType: string;
     name: string;
   } | null>(null);
+  const [wavePhase, setWavePhase] = useState(0);
   const orbIframeRef = useRef<HTMLIFrameElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -87,8 +88,28 @@ export const NeuralCommandCenter: React.FC<NeuralCommandCenterProps> = ({
     win.setAudioLevel?.(level);
   };
 
+  const effectiveVoiceLevel =
+    orbState === 'SPEAKING' && voiceLevel < 0.16
+      ? 0.44 + 0.28 * Math.abs(Math.sin(wavePhase * 0.48))
+      : orbState === 'LISTENING' && voiceLevel < 0.12
+        ? 0.22 + 0.14 * Math.abs(Math.sin(wavePhase * 0.35))
+        : voiceLevel;
+
   useEffect(() => {
-    syncOrbBridge(orbState, voiceLevel);
+    syncOrbBridge(orbState, effectiveVoiceLevel);
+  }, [orbState, effectiveVoiceLevel]);
+
+  useEffect(() => {
+    const isVoiceReactive =
+      orbState === 'SPEAKING' ||
+      orbState === 'LISTENING' ||
+      orbState === 'THINKING' ||
+      voiceLevel > 0.1;
+    if (!isVoiceReactive) return;
+    const id = window.setInterval(() => {
+      setWavePhase((p) => (p + 0.36) % (Math.PI * 200));
+    }, 45);
+    return () => window.clearInterval(id);
   }, [orbState, voiceLevel]);
 
   useEffect(() => {
@@ -138,20 +159,20 @@ export const NeuralCommandCenter: React.FC<NeuralCommandCenterProps> = ({
   const rgbMode =
     orbState === 'THINKING'
       ? 'thinking'
-      : orbState === 'SPEAKING'
+      : orbState === 'SPEAKING' || voiceLevel > 0.14
         ? 'speaking'
         : orbState === 'LISTENING'
           ? 'listening'
-          : null;
+          : 'ambient';
 
   const orbStageGlow =
     rgbMode === 'thinking'
-      ? 'shadow-[0_0_42px_-8px_rgba(167,139,250,0.42)]'
+      ? 'shadow-[0_0_52px_-6px_rgba(167,139,250,0.52)]'
       : rgbMode === 'speaking'
-        ? 'shadow-[0_0_42px_-8px_rgba(251,113,133,0.42)]'
+        ? 'shadow-[0_0_64px_-4px_rgba(34,211,238,0.48),0_0_46px_-8px_rgba(244,63,94,0.42)]'
         : rgbMode === 'listening'
-          ? 'shadow-[0_0_42px_-8px_rgba(45,212,191,0.4)]'
-          : '';
+          ? 'shadow-[0_0_52px_-6px_rgba(45,212,191,0.48)]'
+          : 'shadow-[0_0_32px_-12px_rgba(0,229,255,0.28)]';
 
   const stateAccentText =
     rgbMode === 'thinking'
@@ -163,6 +184,9 @@ export const NeuralCommandCenter: React.FC<NeuralCommandCenterProps> = ({
           : 'text-cyan-300';
 
   const showChatFeed = (messages.length > 0 || isThinking) && !chatMinimized;
+  const stageVars = {
+    '--voice-level': String(Math.min(1, Math.max(0.06, effectiveVoiceLevel))),
+  } as React.CSSProperties;
 
   return (
     <div className="w-full h-full flex flex-col bg-[#020305] overflow-hidden">
@@ -250,9 +274,10 @@ export const NeuralCommandCenter: React.FC<NeuralCommandCenterProps> = ({
           </button>
         </div>
 
-        {/* Full-Height Expanded 3D Quantum Core Stage (Reclaiming full workspace down to input bar) */}
+        {/* Full-Height Expanded 3D Quantum Core Stage with Voice-Reactive Multi-Color RGB Waves */}
         <div
-          className={`relative flex-1 min-h-0 rounded-2xl bg-[#05070c] border border-white/10 overflow-hidden transition-shadow duration-500 ${orbStageGlow}`}
+          style={stageVars}
+          className={`relative flex-1 min-h-0 rounded-2xl bg-[#05070c] border border-white/10 overflow-hidden transition-shadow duration-300 ${orbStageGlow}`}
         >
           <iframe
             ref={orbIframeRef}
@@ -262,13 +287,49 @@ export const NeuralCommandCenter: React.FC<NeuralCommandCenterProps> = ({
             className="w-full h-full border-0"
           />
 
-          {rgbMode && (
+          <div className={`brahma-rgb-wash brahma-rgb-wash-${rgbMode}`} />
+          <div className={`brahma-rgb-rim brahma-rgb-${rgbMode}`}>
+            <div className="brahma-rgb-rim-rotor" />
+          </div>
+
+          {(rgbMode === 'speaking' || rgbMode === 'listening' || voiceLevel > 0.14) && (
             <>
-              <div className={`brahma-rgb-wash brahma-rgb-wash-${rgbMode}`} />
-              <div className={`brahma-rgb-rim brahma-rgb-${rgbMode}`}>
-                <div className="brahma-rgb-rim-rotor" />
-              </div>
+              <div className="brahma-rgb-pulse-ring" />
+              <div className="brahma-rgb-pulse-ring brahma-rgb-pulse-ring-delayed" />
             </>
+          )}
+
+          {/* Voice-Synchronized Multi-Color RGB Harmonic Wave Ribbon */}
+          {(rgbMode !== 'ambient' || voiceLevel > 0.1) && !showChatFeed && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-4 bottom-3 h-10 flex items-end justify-center gap-1"
+            >
+              {Array.from({ length: 28 }).map((_, idx) => {
+                const centerWeight = 1 - Math.abs(idx - 13.5) / 15;
+                const harmonic =
+                  0.5 +
+                  0.5 *
+                    Math.sin(wavePhase + idx * 0.42) *
+                    Math.cos(wavePhase * 0.45 - idx * 0.18);
+                const amplitude = Math.min(
+                  1,
+                  Math.max(0.12, (0.16 + effectiveVoiceLevel * 1.15) * (0.35 + harmonic * 0.78) * (0.45 + centerWeight * 0.65))
+                );
+                const hue = Math.round(((idx * 13 + wavePhase * 28) % 360 + 360) % 360);
+                return (
+                  <span
+                    key={idx}
+                    className="w-1.5 sm:w-2 rounded-full transition-[height] duration-75"
+                    style={{
+                      height: `${Math.round(amplitude * 36)}px`,
+                      background: `linear-gradient(to top, hsla(${hue}, 95%, 60%, 0.85), hsla(${(hue + 52) % 360}, 95%, 68%, 0.95))`,
+                      boxShadow: `0 0 10px hsla(${hue}, 95%, 62%, 0.55)`,
+                    }}
+                  />
+                );
+              })}
+            </div>
           )}
 
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[#05070c]/85 via-[#05070c]/30 to-transparent" />

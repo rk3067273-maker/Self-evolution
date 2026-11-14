@@ -499,29 +499,68 @@ export async function verifyServerConnection(
 export async function autoDiscoverApkServer(): Promise<{
   ok: boolean;
   url: string;
+  latencyMs: number;
   geminiConfigured: boolean;
+  checkedUrls: string[];
   message: string;
 }> {
   const cfg = loadBrahmaSettings();
+  const webOrigin =
+    !isNativeApkRuntime() &&
+    typeof window !== 'undefined' &&
+    /^https?:\/\//i.test(window.location.origin)
+      ? window.location.origin.replace(/\/+$/, '')
+      : '';
+
   const candidates = Array.from(
     new Set(
       [
         cfg.serverUrl.trim().replace(/\/+$/, ''),
+        webOrigin,
         TERMUX_LOCAL_SERVER_URL,
         DEFAULT_CLOUD_SERVER_URL,
       ].filter(Boolean)
     )
   );
 
-  for (const candidate of candidates) {
-    const res = await verifyServerConnection(candidate);
+  // Check primary configured/origin candidate first, then probe remaining candidates in parallel on network switch
+  const [first, ...rest] = candidates;
+  if (first) {
+    const res = await verifyServerConnection(first);
     if (res.ok) {
-      saveBrahmaSettings({ serverUrl: candidate });
+      if (isNativeApkRuntime() || cfg.serverUrl.trim()) {
+        saveBrahmaSettings({ serverUrl: first === webOrigin && !isNativeApkRuntime() ? '' : first });
+      }
       return {
         ok: true,
-        url: candidate,
+        url: first,
+        latencyMs: res.latencyMs,
         geminiConfigured: res.geminiConfigured,
-        message: `Auto-Connected: ${candidate} (${res.latencyMs}ms)`,
+        checkedUrls: [first],
+        message: `Auto-Connected: ${first} (${res.latencyMs}ms)`,
+      };
+    }
+  }
+
+  if (rest.length > 0) {
+    const results = await Promise.all(
+      rest.map(async (candidate) => ({
+        candidate,
+        res: await verifyServerConnection(candidate),
+      }))
+    );
+    const healthy = results.find((r) => r.res.ok);
+    if (healthy) {
+      const saveTarget =
+        healthy.candidate === webOrigin && !isNativeApkRuntime() ? '' : healthy.candidate;
+      saveBrahmaSettings({ serverUrl: saveTarget });
+      return {
+        ok: true,
+        url: healthy.candidate,
+        latencyMs: healthy.res.latencyMs,
+        geminiConfigured: healthy.res.geminiConfigured,
+        checkedUrls: candidates,
+        message: `Auto-Connected: ${healthy.candidate} (${healthy.res.latencyMs}ms)`,
       };
     }
   }
@@ -529,11 +568,15 @@ export async function autoDiscoverApkServer(): Promise<{
   return {
     ok: false,
     url: '',
+    latencyMs: 0,
     geminiConfigured: false,
+    checkedUrls: candidates,
     message:
-      'কোনো চালু সার্ভার পাওয়া যায়নি। AI Studio থেকে অ্যাপটি Share/Deploy করুন অথবা Termux-এ http://127.0.0.1:3000 চালু করুন।',
+      'কোনো চালু সার্ভার পাওয়া যায়নি। নেটওয়ার্ক পরিবর্তন হলে Refresh চাপুন অথবা AI Studio থেকে অ্যাপটি Share/Deploy করুন।',
   };
 }
+
+export const autoDiscoveryApkServer = autoDiscoverApkServer;
 
 function getLocalStore<T>(key: string, fallback: T): T {
   try {

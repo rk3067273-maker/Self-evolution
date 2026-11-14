@@ -48,37 +48,72 @@ body,
   background: rgba(0, 229, 255, 0.42);
 }
 
-/* Subtle RGB Spectral Perimeter & Ambient Light Patterns */
+/* Voice-Reactive Multi-Color RGB Wave Lighting & Spectral Patterns */
 @keyframes brahma-rgb-orbit {
   0% {
-    transform: rotate(0deg) scale(1.35);
+    transform: rotate(0deg) scale(1.38);
   }
   100% {
+    transform: rotate(360deg) scale(1.38);
+  }
+}
+
+@keyframes brahma-rgb-orbit-reverse {
+  0% {
     transform: rotate(360deg) scale(1.35);
+  }
+  100% {
+    transform: rotate(0deg) scale(1.35);
+  }
+}
+
+@keyframes brahma-rgb-wave-flow {
+  0% {
+    background-position: 0% 50%;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    background-position: 100% 50%;
+    transform: translate3d(0, -1.5%, 0) scale(calc(1.01 + var(--voice-level, 0.06) * 0.045));
+  }
+  100% {
+    background-position: 0% 50%;
+    transform: translate3d(0, 0, 0) scale(1);
   }
 }
 
 @keyframes brahma-rgb-harmonic {
   0%,
   100% {
-    opacity: 0.24;
-    transform: scale(0.985);
+    opacity: calc(0.32 + var(--voice-level, 0.06) * 0.58);
+    transform: scale(calc(0.985 + var(--voice-level, 0.06) * 0.03));
   }
   50% {
-    opacity: 0.46;
-    transform: scale(1.015);
+    opacity: calc(0.55 + var(--voice-level, 0.06) * 0.45);
+    transform: scale(calc(1.01 + var(--voice-level, 0.06) * 0.055));
   }
 }
 
 @keyframes brahma-rgb-sonar {
   0%,
   100% {
-    opacity: 0.2;
+    opacity: calc(0.24 + var(--voice-level, 0.06) * 0.5);
     transform: scale(0.99);
   }
   50% {
-    opacity: 0.42;
-    transform: scale(1.01);
+    opacity: calc(0.48 + var(--voice-level, 0.06) * 0.48);
+    transform: scale(1.018);
+  }
+}
+
+@keyframes brahma-wave-ring-expand {
+  0% {
+    opacity: calc(0.28 + var(--voice-level, 0.06) * 0.52);
+    transform: scale(0.72);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(calc(1.22 + var(--voice-level, 0.06) * 0.25));
   }
 }
 
@@ -86,13 +121,14 @@ body,
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  padding: 2px;
+  padding: 2.5px;
   pointer-events: none;
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   overflow: hidden;
-  transition: opacity 320ms ease;
+  opacity: calc(0.35 + var(--voice-level, 0.06) * 0.65);
+  transition: opacity 160ms ease;
 }
 
 .brahma-rgb-rim-rotor {
@@ -102,35 +138,54 @@ body,
   will-change: transform, opacity;
 }
 
+.brahma-rgb-ambient .brahma-rgb-rim-rotor {
+  background: conic-gradient(
+    from 0deg,
+    rgba(0, 229, 255, 0.45),
+    rgba(52, 211, 153, 0.4),
+    rgba(139, 92, 246, 0.42),
+    rgba(56, 189, 248, 0.45),
+    rgba(0, 229, 255, 0.45)
+  );
+  animation: brahma-rgb-orbit 11s linear infinite;
+}
+
 .brahma-rgb-thinking .brahma-rgb-rim-rotor {
   background: conic-gradient(
     from 0deg,
-    rgba(167, 139, 250, 0.72),
-    rgba(56, 189, 248, 0.65),
-    rgba(251, 191, 36, 0.62),
-    rgba(167, 139, 250, 0.72)
+    rgba(167, 139, 250, 0.92),
+    rgba(56, 189, 248, 0.88),
+    rgba(52, 211, 153, 0.85),
+    rgba(251, 191, 36, 0.88),
+    rgba(167, 139, 250, 0.92)
   );
-  animation: brahma-rgb-orbit 6.5s linear infinite;
+  animation: brahma-rgb-orbit 4.2s linear infinite;
 }
 
 .brahma-rgb-speaking .brahma-rgb-rim-rotor {
-  background: radial-gradient(
-    circle at 50% 50%,
-    rgba(34, 211, 238, 0.74) 0%,
-    rgba(251, 113, 133, 0.7) 48%,
-    rgba(52, 211, 153, 0.64) 100%
+  background: conic-gradient(
+    from 0deg,
+    rgba(34, 211, 238, 0.98),
+    rgba(52, 211, 153, 0.95),
+    rgba(168, 85, 247, 0.98),
+    rgba(244, 63, 94, 0.95),
+    rgba(251, 191, 36, 0.92),
+    rgba(56, 189, 248, 0.98),
+    rgba(34, 211, 238, 0.98)
   );
-  animation: brahma-rgb-harmonic 1.25s ease-in-out infinite;
+  animation: brahma-rgb-orbit 2.8s linear infinite;
 }
 
 .brahma-rgb-listening .brahma-rgb-rim-rotor {
-  background: linear-gradient(
-    135deg,
-    rgba(45, 212, 191, 0.7),
-    rgba(96, 165, 250, 0.66),
-    rgba(129, 140, 248, 0.68)
+  background: conic-gradient(
+    from 0deg,
+    rgba(45, 212, 191, 0.9),
+    rgba(56, 189, 248, 0.88),
+    rgba(129, 140, 248, 0.9),
+    rgba(52, 211, 153, 0.88),
+    rgba(45, 212, 191, 0.9)
   );
-  animation: brahma-rgb-sonar 2.8s ease-in-out infinite;
+  animation: brahma-rgb-orbit-reverse 4.6s linear infinite;
 }
 
 .brahma-rgb-wash {
@@ -138,35 +193,101 @@ body,
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  will-change: transform, opacity;
+  will-change: transform, opacity, background-position;
+  mix-blend-mode: screen;
+}
+
+.brahma-rgb-wash-ambient {
+  background:
+    radial-gradient(circle at 20% 25%, rgba(0, 229, 255, 0.08), transparent 55%),
+    radial-gradient(circle at 80% 75%, rgba(139, 92, 246, 0.08), transparent 55%);
+  animation: brahma-rgb-sonar 5s ease-in-out infinite;
 }
 
 .brahma-rgb-wash-thinking {
-  background: radial-gradient(circle at 24% 20%, rgba(167, 139, 250, 0.19), transparent 54%),
-    radial-gradient(circle at 76% 80%, rgba(251, 191, 36, 0.14), transparent 54%);
-  animation: brahma-rgb-sonar 3.4s ease-in-out infinite;
+  background:
+    linear-gradient(
+      125deg,
+      rgba(167, 139, 250, 0.22),
+      rgba(56, 189, 248, 0.16),
+      rgba(52, 211, 153, 0.16),
+      rgba(251, 191, 36, 0.2),
+      rgba(167, 139, 250, 0.22)
+    );
+  background-size: 240% 240%;
+  animation: brahma-rgb-wave-flow 3.8s ease-in-out infinite;
 }
 
 .brahma-rgb-wash-speaking {
-  background: radial-gradient(circle at 50% 50%, rgba(34, 211, 238, 0.2), transparent 60%),
-    radial-gradient(circle at 74% 26%, rgba(251, 113, 133, 0.17), transparent 56%);
-  animation: brahma-rgb-harmonic 1.25s ease-in-out infinite;
+  background:
+    linear-gradient(
+      115deg,
+      rgba(34, 211, 238, calc(0.16 + var(--voice-level, 0.2) * 0.24)),
+      rgba(52, 211, 153, calc(0.14 + var(--voice-level, 0.2) * 0.22)),
+      rgba(168, 85, 247, calc(0.18 + var(--voice-level, 0.2) * 0.24)),
+      rgba(244, 63, 94, calc(0.16 + var(--voice-level, 0.2) * 0.24)),
+      rgba(251, 191, 36, calc(0.14 + var(--voice-level, 0.2) * 0.2)),
+      rgba(34, 211, 238, calc(0.16 + var(--voice-level, 0.2) * 0.24))
+    );
+  background-size: 280% 280%;
+  animation: brahma-rgb-wave-flow 2.4s linear infinite;
 }
 
 .brahma-rgb-wash-listening {
-  background: radial-gradient(circle at 50% 50%, rgba(45, 212, 191, 0.19), transparent 62%),
-    radial-gradient(circle at 26% 76%, rgba(96, 165, 250, 0.15), transparent 56%);
-  animation: brahma-rgb-sonar 2.8s ease-in-out infinite;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(45, 212, 191, calc(0.14 + var(--voice-level, 0.12) * 0.24)),
+      rgba(56, 189, 248, calc(0.14 + var(--voice-level, 0.12) * 0.22)),
+      rgba(129, 140, 248, calc(0.16 + var(--voice-level, 0.12) * 0.24)),
+      rgba(45, 212, 191, calc(0.14 + var(--voice-level, 0.12) * 0.24))
+    );
+  background-size: 240% 240%;
+  animation: brahma-rgb-wave-flow 3.2s ease-in-out infinite;
+}
+
+.brahma-rgb-pulse-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(68vw, 340px);
+  height: min(68vw, 340px);
+  margin-left: calc(min(68vw, 340px) / -2);
+  margin-top: calc(min(68vw, 340px) / -2);
+  border-radius: 9999px;
+  pointer-events: none;
+  border: 2px solid transparent;
+  background: linear-gradient(
+      120deg,
+      rgba(34, 211, 238, 0.72),
+      rgba(52, 211, 153, 0.68),
+      rgba(168, 85, 247, 0.72),
+      rgba(244, 63, 94, 0.72),
+      rgba(251, 191, 36, 0.68)
+    )
+    border-box;
+  -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: brahma-wave-ring-expand 2.2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.brahma-rgb-pulse-ring-delayed {
+  animation-delay: 1.1s;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .brahma-rgb-ambient .brahma-rgb-rim-rotor,
   .brahma-rgb-thinking .brahma-rgb-rim-rotor,
   .brahma-rgb-speaking .brahma-rgb-rim-rotor,
   .brahma-rgb-listening .brahma-rgb-rim-rotor,
+  .brahma-rgb-wash-ambient,
   .brahma-rgb-wash-thinking,
   .brahma-rgb-wash-speaking,
-  .brahma-rgb-wash-listening {
+  .brahma-rgb-wash-listening,
+  .brahma-rgb-pulse-ring {
     animation: none;
   }
 }
+
 
