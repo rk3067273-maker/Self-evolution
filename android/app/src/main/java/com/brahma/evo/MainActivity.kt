@@ -355,6 +355,44 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
 
         @JavascriptInterface
+        fun httpRequest(urlString: String, method: String, jsonBody: String): String {
+            return try {
+                val upperMethod = method.uppercase(Locale.ROOT).ifBlank { "GET" }
+                val conn = (URL(urlString).openConnection() as HttpURLConnection).apply {
+                    requestMethod = upperMethod
+                    connectTimeout = 15000
+                    readTimeout = 30000
+                    instanceFollowRedirects = false
+                    setRequestProperty("Accept", "application/json")
+                    if (upperMethod == "POST" || upperMethod == "PUT" || upperMethod == "PATCH") {
+                        doOutput = true
+                        setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                    }
+                }
+                if ((upperMethod == "POST" || upperMethod == "PUT" || upperMethod == "PATCH") && jsonBody.isNotEmpty()) {
+                    OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
+                        writer.write(jsonBody)
+                        writer.flush()
+                    }
+                }
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                JSONObject().apply {
+                    put("ok", code in 200..299)
+                    put("status", code)
+                    put("body", body)
+                }.toString()
+            } catch (e: Exception) {
+                JSONObject().apply {
+                    put("ok", false)
+                    put("status", 0)
+                    put("error", e.message ?: "HTTP request failed")
+                }.toString()
+            }
+        }
+
+        @JavascriptInterface
         fun speakDeepVoice(text: String, lang: String, pitch: Float, rate: Float): Boolean {
             val engine = tts ?: return false
             if (!ttsReady) return false

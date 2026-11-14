@@ -37,9 +37,11 @@ import { RemoteAndIdentityPanel } from './components/RemoteAndIdentityPanel';
 import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
 import { SettingsModal } from './components/SettingsModal';
 import {
+  autoDiscoverApkServer,
   brahmaFetch,
   getBrahmaNative,
   getVoiceOption,
+  isNativeApkRuntime,
   loadBrahmaSettings,
   saveBrahmaSettings,
   type BrahmaSettings,
@@ -146,6 +148,15 @@ export default function App() {
   useEffect(() => {
     refreshBriefing();
     refreshTerminalState();
+    if (isNativeApkRuntime() && !loadBrahmaSettings().serverUrl.trim()) {
+      void autoDiscoverApkServer().then((res) => {
+        if (res.ok && res.url) {
+          setAppSettings(loadBrahmaSettings());
+          refreshBriefing();
+          refreshTerminalState();
+        }
+      });
+    }
   }, [refreshBriefing, refreshTerminalState]);
 
   useEffect(() => {

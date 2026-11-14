@@ -186,7 +186,15 @@ export interface BrahmaNativeBridge {
   openAppByName?: (appName: string) => boolean;
   httpPostJson?: (url: string, jsonBody: string) => string;
   httpGet?: (url: string) => string;
+  httpRequest?: (url: string, method: string, jsonBody: string) => string;
 }
+
+export const DEFAULT_CLOUD_SERVER_URL = (
+  import.meta.env.VITE_SERVER_URL ||
+  'https://ais-pre-puu2xux3jy53m6hmqddpbp-91841391142.asia-east1.run.app'
+).replace(/\/+$/, '');
+
+export const TERMUX_LOCAL_SERVER_URL = 'http://127.0.0.1:3000';
 
 const SETTINGS_STORAGE_KEY = 'brahma_settings_v1';
 const SKILLS_STORAGE_KEY = 'brahma_local_skills_v1';
@@ -271,6 +279,7 @@ export function getApiBaseUrl(): string {
   const cfg = loadBrahmaSettings();
   const custom = cfg.serverUrl.trim().replace(/\/+$/, '');
   if (custom && /^https?:\/\/.+/.test(custom)) return custom;
+  if (isNativeApkRuntime()) return DEFAULT_CLOUD_SERVER_URL;
   return '';
 }
 
@@ -352,40 +361,107 @@ export async function requestPermissionByKey(key: string): Promise<boolean> {
   return false;
 }
 
+function tryNativeHttpFetch(url: string, init?: RequestInit): Response | null {
+  const native = getBrahmaNative();
+  if (!native || !/^https?:\/\//i.test(url)) return null;
+  const method = (init?.method || 'GET').toUpperCase();
+  const bodyStr = typeof init?.body === 'string' ? init.body : '';
+
+  let rawResult: string | undefined;
+  if (native.httpRequest) {
+    rawResult = native.httpRequest(url, method, bodyStr);
+  } else if (method === 'GET' && native.httpGet) {
+    rawResult = native.httpGet(url);
+  } else if (method === 'POST' && native.httpPostJson) {
+    rawResult = native.httpPostJson(url, bodyStr);
+  }
+  if (!rawResult) return null;
+
+  try {
+    const parsed = JSON.parse(rawResult) as {
+      ok?: boolean;
+      status?: number;
+      body?: string;
+      error?: string;
+    };
+    const status = Number(parsed.status || 0);
+    if (status <= 0) {
+      throw new Error(parsed.error || 'Native HTTP connection failed');
+    }
+    return new Response(parsed.body || '', {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function verifyServerConnection(
   url?: string
-): Promise<{ ok: boolean; latencyMs: number; geminiConfigured: boolean; message: string }> {
+): Promise<{ ok: boolean; latencyMs: number; geminiConfigured: boolean; resolvedUrl?: string; message: string }> {
   const clean = (url || '').trim().replace(/\/+$/, '');
-  const endpoint = clean ? `${clean}/api/health` : '/api/health';
-  if (isNativeApkRuntime() && !clean) {
-    return {
-      ok: false,
-      latencyMs: 0,
-      geminiConfigured: false,
-      message: 'Android APK মোডে সার্ভারের সাথে যুক্ত হতে আপনার সার্ভার URL দিন।',
-    };
-  }
+  const targetBase = clean || (isNativeApkRuntime() ? DEFAULT_CLOUD_SERVER_URL : '');
+  const endpoint = targetBase ? `${targetBase}/api/health` : '/api/health';
+
   const t0 = Date.now();
   try {
-    const res = await fetch(endpoint);
+    let res: Response;
+    try {
+      res = await fetch(endpoint, { redirect: 'manual' });
+    } catch {
+      const nativeRes = tryNativeHttpFetch(endpoint, { method: 'GET' });
+      if (!nativeRes) throw new Error('সার্ভারে পৌঁছানো যায়নি। ইন্টারনেট বা URL চেক করুন।');
+      res = nativeRes;
+    }
+
     const latencyMs = Date.now() - t0;
-    const data = (await res.json()) as { ok?: boolean; geminiConfigured?: boolean };
+    if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400)) {
+      return {
+        ok: false,
+        latencyMs,
+        geminiConfigured: false,
+        message:
+          'এই URL-টিতে Google লগইন প্রয়োজন (Dev URL)। APK-র জন্য AI Studio থেকে অ্যাপটি Publish/Share করে Shared App URL ব্যবহার করুন অথবা Termux (http://127.0.0.1:3000) চালান।',
+      };
+    }
+
+    const rawText = await res.text();
+    let data: { ok?: boolean; geminiConfigured?: boolean } = {};
+    try {
+      data = JSON.parse(rawText) as { ok?: boolean; geminiConfigured?: boolean };
+    } catch {
+      return {
+        ok: false,
+        latencyMs,
+        geminiConfigured: false,
+        message:
+          res.status === 404
+            ? 'সার্ভার এখনও Publish হয়নি (HTTP 404)। AI Studio থেকে অ্যাপটি Share/Deploy করে লাইভ করুন অথবা Termux-এ http://127.0.0.1:3000 চালু করুন।'
+            : `সার্ভার থেকে সঠিক JSON উত্তর আসেনি (HTTP ${res.status})।`,
+      };
+    }
+
     if (res.ok && data.ok) {
       const configured = Boolean(data.geminiConfigured);
       return {
         ok: true,
         latencyMs,
         geminiConfigured: configured,
+        resolvedUrl: targetBase,
         message: configured
           ? `Server Connected (${latencyMs}ms) · Gemini Neural Core Active`
-          : `Server Connected (${latencyMs}ms) · ব্রেন চালু করতে AI Studio-র Settings > Secrets-এ GEMINI_API_KEY সেট করুন।`,
+          : `Server Connected (${latencyMs}ms) · ব্রেন চালু করতে সার্ভারের Environment-এ GEMINI_API_KEY সেট করুন।`,
       };
     }
     return {
       ok: false,
       latencyMs,
       geminiConfigured: false,
-      message: `Server returned HTTP ${res.status}`,
+      message:
+        res.status === 404
+          ? 'সার্ভার পাওয়া যায়নি (HTTP 404) — AI Studio থেকে অ্যাপটি আগে Share/Deploy করুন অথবা Termux URL দিন।'
+          : `Server returned HTTP ${res.status}`,
     };
   } catch (err: unknown) {
     return {
@@ -395,6 +471,45 @@ export async function verifyServerConnection(
       message: err instanceof Error ? err.message : 'সার্ভারের সাথে সংযোগ স্থাপন করা যায়নি।',
     };
   }
+}
+
+export async function autoDiscoverApkServer(): Promise<{
+  ok: boolean;
+  url: string;
+  geminiConfigured: boolean;
+  message: string;
+}> {
+  const cfg = loadBrahmaSettings();
+  const candidates = Array.from(
+    new Set(
+      [
+        cfg.serverUrl.trim().replace(/\/+$/, ''),
+        TERMUX_LOCAL_SERVER_URL,
+        DEFAULT_CLOUD_SERVER_URL,
+      ].filter(Boolean)
+    )
+  );
+
+  for (const candidate of candidates) {
+    const res = await verifyServerConnection(candidate);
+    if (res.ok) {
+      saveBrahmaSettings({ serverUrl: candidate });
+      return {
+        ok: true,
+        url: candidate,
+        geminiConfigured: res.geminiConfigured,
+        message: `Auto-Connected: ${candidate} (${res.latencyMs}ms)`,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    url: '',
+    geminiConfigured: false,
+    message:
+      'কোনো চালু সার্ভার পাওয়া যায়নি। AI Studio থেকে অ্যাপটি Share/Deploy করুন অথবা Termux-এ http://127.0.0.1:3000 চালু করুন।',
+  };
 }
 
 function getLocalStore<T>(key: string, fallback: T): T {
@@ -879,15 +994,21 @@ async function handleStandaloneFallback(
 
 export async function brahmaFetch(path: string, init?: RequestInit): Promise<Response> {
   const baseUrl = getApiBaseUrl();
-
-  // Inside native Android APK with no custom serverUrl configured, use local device bridge
-  if (isNativeApkRuntime() && !baseUrl) {
-    return handleStandaloneFallback(path, init);
-  }
+  const fullUrl = `${baseUrl}${path}`;
 
   try {
-    return await fetch(`${baseUrl}${path}`, init);
+    const res = await fetch(fullUrl, init);
+    if (res.status === 404 && isNativeApkRuntime()) {
+      return handleStandaloneFallback(path, init);
+    }
+    return res;
   } catch {
+    if (baseUrl && isNativeApkRuntime()) {
+      const nativeRes = tryNativeHttpFetch(fullUrl, init);
+      if (nativeRes && nativeRes.status !== 404) {
+        return nativeRes;
+      }
+    }
     if (baseUrl && !isNativeApkRuntime()) {
       try {
         return await fetch(path, init);

@@ -26,12 +26,16 @@ import {
   VolumeX,
 } from 'lucide-react';
 import {
+  autoDiscoverApkServer,
   brahmaFetch,
+  DEFAULT_CLOUD_SERVER_URL,
   getBrahmaNative,
   getPermissionStatuses,
+  isNativeApkRuntime,
   loadBrahmaSettings,
   requestPermissionByKey,
   saveBrahmaSettings,
+  TERMUX_LOCAL_SERVER_URL,
   verifyServerConnection,
   type AndroidPermissionStatus,
   type BrahmaSettings,
@@ -139,6 +143,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const updated = saveBrahmaSettings(settings);
     onSettingsChanged(updated);
     await checkServerStatus(settings.serverUrl);
+  };
+
+  const handleAutoDetectServer = async () => {
+    setTestingServer(true);
+    try {
+      const res = await autoDiscoverApkServer();
+      if (res.ok && res.url) {
+        updateField('serverUrl', res.url);
+      }
+      setServerStatus({ ok: res.ok, geminiConfigured: res.geminiConfigured, msg: res.message });
+    } finally {
+      setTestingServer(false);
+    }
+  };
+
+  const applyPresetServer = async (presetUrl: string) => {
+    updateField('serverUrl', presetUrl);
+    await checkServerStatus(presetUrl);
+  };
+
+  const copyServerUrl = (textToCopy: string) => {
+    try {
+      void navigator.clipboard?.writeText(textToCopy);
+      setSavedNotice(`কপি হয়েছে: ${textToCopy}`);
+      window.setTimeout(() => setSavedNotice(null), 2200);
+    } catch {
+      // ignore
+    }
   };
 
   const handleRequestPerm = async (key: string) => {
@@ -350,19 +382,70 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
               {/* Optional Server Backend URL (for Standalone Android APK) */}
               <div className="p-4 rounded-2xl bg-[#0d111a] border border-white/10 space-y-3">
-                <div className="flex items-center gap-2 text-xs font-bold text-white uppercase tracking-wider">
-                  <Server className="w-4 h-4 text-emerald-400" />
-                  <span>Backend Server URL (Android APK রিমোট সিঙ্ক)</span>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 text-xs font-bold text-white uppercase tracking-wider">
+                    <Server className="w-4 h-4 text-emerald-400" />
+                    <span>Backend Server URL (ফোনে চালানোর সার্ভার সংযোগ)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleAutoDetectServer()}
+                    disabled={testingServer}
+                    className="px-2.5 py-1 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/35 text-[11px] font-semibold text-cyan-200 cursor-pointer"
+                  >
+                    Auto-Detect Server
+                  </button>
                 </div>
-                <p className="text-xs text-slate-400">
-                  ওয়েবে ব্যবহার করলে এটি ফাঁকা রাখুন। শুধুমাত্র Android APK থেকে আপনার হোস্ট করা ব্রহ্মা সার্ভারে যুক্ত হতে হলে নিচে সার্ভার URL দিন।
+
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  ওয়েব বা Chrome PWA থেকে চালালে এটি অটোমেটিক কাজ করে। Android <code className="text-cyan-300">.apk</code> চালাতে নিচের যেকোনো একটি <strong>1-ট্যাপ বাটন</strong> দিয়ে সার্ভার সেট করুন:
                 </p>
+
+                {/* Quick Server URL Presets */}
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void applyPresetServer(DEFAULT_CLOUD_SERVER_URL)}
+                    className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/35 text-[11px] font-semibold text-emerald-200 cursor-pointer"
+                  >
+                    Use Cloud Shared URL
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void applyPresetServer(TERMUX_LOCAL_SERVER_URL)}
+                    className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/15 text-[11px] font-semibold text-slate-200 cursor-pointer"
+                  >
+                    Use Termux Local (127.0.0.1:3000)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      copyServerUrl(
+                        settings.serverUrl.trim() ||
+                          (!isNativeApkRuntime() && typeof window !== 'undefined'
+                            ? window.location.origin
+                            : DEFAULT_CLOUD_SERVER_URL)
+                      )
+                    }
+                    className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/15 text-[11px] text-slate-300 cursor-pointer"
+                  >
+                    Copy URL
+                  </button>
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-[#06080c] border border-white/10 text-[11px] text-slate-300 space-y-1">
+                  <div className="text-emerald-300 font-semibold">Cloud Shared URL (AI Studio Deploy করার পর চালু হবে):</div>
+                  <div className="font-mono text-[10px] text-cyan-200 break-all select-all">
+                    {DEFAULT_CLOUD_SERVER_URL}
+                  </div>
+                </div>
+
                 <div className="flex gap-2">
                   <input
                     type="url"
                     value={settings.serverUrl}
                     onChange={(e) => updateField('serverUrl', e.target.value)}
-                    placeholder="https://your-brahma-server.run.app"
+                    placeholder={DEFAULT_CLOUD_SERVER_URL}
                     className="flex-1 bg-[#06080c] border border-white/15 focus:border-emerald-400 rounded-xl px-3.5 py-2.5 text-xs font-mono text-white focus:outline-none"
                   />
                   <button
@@ -391,6 +474,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <span>{serverStatus.msg}</span>
                   </div>
                 )}
+
+                <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-400/25 text-[11px] text-cyan-100 leading-relaxed">
+                  <strong>সবচেয়ে সহজ উপায় (Server URL ছাড়াই ফোনে চালান):</strong> AI Studio থেকে <strong>Share / Publish</strong> করে Android Chrome-এ আপনার Shared URL ওপেন করে <strong>Install App / Add to Home Screen</strong> চাপুন — একদম আসল অ্যাপের মতো সরাসরি ফোনে চলবে।
+                </div>
               </div>
 
               {/* Smart Home & Weather Integration Keys */}
