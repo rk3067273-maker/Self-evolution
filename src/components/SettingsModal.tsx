@@ -24,6 +24,9 @@ import {
   Maximize2,
   MapPinOff,
   VolumeX,
+  ExternalLink,
+  Copy,
+  Move,
 } from 'lucide-react';
 import {
   autoDiscoverApkServer,
@@ -171,6 +174,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     } catch {
       // ignore
     }
+  };
+
+  const handleSnapNotchCorner = (
+    corner: 'top-left' | 'top-center' | 'top-right' | 'bottom-left' | 'bottom-right'
+  ) => {
+    const w = Math.round(190 * settings.notchScale);
+    const h = Math.round(36 * settings.notchScale);
+    const margin = 10;
+    const pos =
+      corner === 'top-left'
+        ? { x: margin, y: 8 }
+        : corner === 'top-right'
+          ? { x: Math.max(margin, window.innerWidth - w - margin), y: 8 }
+          : corner === 'bottom-left'
+            ? { x: margin, y: Math.max(margin, window.innerHeight - h - 72) }
+            : corner === 'bottom-right'
+              ? {
+                  x: Math.max(margin, window.innerWidth - w - margin),
+                  y: Math.max(margin, window.innerHeight - h - 72),
+                }
+              : null;
+    updateField('notchPosition', pos);
+    getBrahmaNative()?.moveOverlayToCorner?.(corner);
   };
 
   const handleRequestPerm = async (key: string) => {
@@ -433,10 +459,59 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                 </div>
 
-                <div className="p-2.5 rounded-xl bg-[#06080c] border border-white/10 text-[11px] text-slate-300 space-y-1">
-                  <div className="text-emerald-300 font-semibold">Cloud Shared URL (AI Studio Deploy করার পর চালু হবে):</div>
-                  <div className="font-mono text-[10px] text-cyan-200 break-all select-all">
-                    {DEFAULT_CLOUD_SERVER_URL}
+                <div className="p-3 rounded-xl bg-[#06080c] border border-emerald-500/25 text-[11px] text-slate-300 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-emerald-300 font-semibold">
+                      ডিফল্ট Cloud Server URL (APK-তে আগে থেকেই অটো-সেভ করা):
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => copyServerUrl(DEFAULT_CLOUD_SERVER_URL)}
+                      className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/15 text-[10px] text-white inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3" /> Copy
+                    </button>
+                  </div>
+
+                  <a
+                    href={DEFAULT_CLOUD_SERVER_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-[10px] text-cyan-300 hover:text-cyan-200 underline break-all inline-flex items-center gap-1"
+                  >
+                    <span>{DEFAULT_CLOUD_SERVER_URL}</span>
+                    <ExternalLink className="w-3 h-3 shrink-0" />
+                  </a>
+
+                  <div className="pt-1.5 border-t border-white/10 text-[11px] text-slate-300 space-y-1 leading-relaxed">
+                    <div className="font-semibold text-white">Server URL কোথায় পাবেন ও কীভাবে চালাবেন?</div>
+                    <div>
+                      ১. <strong>GitHub APK (অটো ডিফল্ট):</strong> GitHub থেকে APK নামিয়ে ইনস্টল করলে উপরের Cloud Server URL আগে থেকেই সেট করা থাকবে — শুধু AI Studio থেকে অ্যাপটি একবার <strong>Share / Publish</strong> করে রাখলেই অটোমেটিক কানেক্ট হয়ে যাবে।
+                    </div>
+                    <div>
+                      ২. <strong>সরাসরি Browser / PWA ইনস্টল:</strong> ফোনের Chrome-এ{' '}
+                      <a
+                        href={DEFAULT_CLOUD_SERVER_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-cyan-300 underline"
+                      >
+                        এই লিংকটি
+                      </a>{' '}
+                      খুলে <strong>Install App</strong> চাপলে কোনো Server URL ছাড়াই চলবে।
+                    </div>
+                    <div>
+                      ৩. <strong>সার্ভার স্ট্যাটাস চেক:</strong>{' '}
+                      <a
+                        href={`${DEFAULT_CLOUD_SERVER_URL}/api/health`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-emerald-300 underline font-mono text-[10px]"
+                      >
+                        /api/health লিংক দেখুন
+                      </a>{' '}
+                      — অথবা ফোনের Termux-এ চালালে <code className="text-cyan-300">http://127.0.0.1:3000</code> চাপুন।
+                    </div>
                   </div>
                 </div>
 
@@ -474,10 +549,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <span>{serverStatus.msg}</span>
                   </div>
                 )}
-
-                <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-400/25 text-[11px] text-cyan-100 leading-relaxed">
-                  <strong>সবচেয়ে সহজ উপায় (Server URL ছাড়াই ফোনে চালান):</strong> AI Studio থেকে <strong>Share / Publish</strong> করে Android Chrome-এ আপনার Shared URL ওপেন করে <strong>Install App / Add to Home Screen</strong> চাপুন — একদম আসল অ্যাপের মতো সরাসরি ফোনে চলবে।
-                </div>
               </div>
 
               {/* Smart Home & Weather Integration Keys */}
@@ -656,12 +727,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => updateField('notchPosition', null)}
+                    onClick={() => handleSnapNotchCorner('top-center')}
                     className="px-3 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/35 text-[11px] text-cyan-200 inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <MapPinOff className="w-3.5 h-3.5" />
                     <span>পজিশন রিসেট (Top Center)</span>
                   </button>
+                </div>
+
+                <div className="pt-2 border-t border-white/10 space-y-2">
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-200">
+                    <Move className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>১-ট্যাপে স্ক্রিনের যেকোনো কোণায় নিন:</span>
+                  </div>
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+                    {(
+                      [
+                        { id: 'top-left', label: 'Top Left' },
+                        { id: 'top-center', label: 'Top Center' },
+                        { id: 'top-right', label: 'Top Right' },
+                        { id: 'bottom-left', label: 'Bottom Left' },
+                        { id: 'bottom-right', label: 'Bottom Right' },
+                      ] as const
+                    ).map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => handleSnapNotchCorner(c.id)}
+                        className="py-1.5 px-2 rounded-lg bg-[#06080c] hover:bg-emerald-500/15 border border-white/15 hover:border-emerald-400/45 text-[11px] text-slate-200 cursor-pointer"
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 

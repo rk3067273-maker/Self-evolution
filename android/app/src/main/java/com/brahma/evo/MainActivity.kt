@@ -297,6 +297,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
 
         @JavascriptInterface
+        fun moveOverlayToCorner(corner: String) {
+            BrahmaOverlayService.instance?.snapToCorner(corner)
+        }
+
+        @JavascriptInterface
         fun httpPostJson(urlString: String, jsonBody: String): String {
             return try {
                 val conn = (URL(urlString).openConnection() as HttpURLConnection).apply {

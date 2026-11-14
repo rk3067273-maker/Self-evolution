@@ -10,9 +10,12 @@ import {
   AlertTriangle,
   Maximize2,
   FolderGit2,
+  Copy,
+  Check,
+  Server,
 } from 'lucide-react';
 import type { LanguageMode, TerminalState } from '../types/brahma';
-import { brahmaFetch } from '../lib/brahmaClient';
+import { brahmaFetch, DEFAULT_CLOUD_SERVER_URL } from '../lib/brahmaClient';
 
 interface AndroidStatusData {
   readyForGithubApk: boolean;
@@ -41,6 +44,7 @@ export const TermuxAndApkPanel: React.FC<TermuxAndApkPanelProps> = ({
   const [busy, setBusy] = useState(false);
   const [androidStatus, setAndroidStatus] = useState<AndroidStatusData | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [copiedUrl, setCopiedUrl] = useState(false);
 
   useEffect(() => {
     brahmaFetch('/api/android/status')
@@ -309,6 +313,39 @@ export const TermuxAndApkPanel: React.FC<TermuxAndApkPanelProps> = ({
             ))}
           </div>
         )}
+
+        {/* Pre-Configured Default Server URL Info */}
+        <div className="p-3.5 rounded-xl bg-[#06080c] border border-emerald-500/25 space-y-2 text-xs">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2 font-semibold text-emerald-300">
+              <Server className="w-4 h-4" />
+              <span>Pre-Configured Default Server URL (APK-তে অটো সেভ থাকবে)</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard?.writeText(DEFAULT_CLOUD_SERVER_URL);
+                setCopiedUrl(true);
+                window.setTimeout(() => setCopiedUrl(false), 2000);
+              }}
+              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-[11px] text-white inline-flex items-center gap-1 cursor-pointer"
+            >
+              {copiedUrl ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{copiedUrl ? 'Copied!' : 'Copy URL'}</span>
+            </button>
+          </div>
+          <a
+            href={DEFAULT_CLOUD_SERVER_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block font-mono text-[11px] text-cyan-300 hover:text-cyan-200 underline break-all"
+          >
+            {DEFAULT_CLOUD_SERVER_URL}
+          </a>
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            GitHub Actions-এ পুশ করলে এই লিংকটি স্বয়ংক্রিয়ভাবে APK-তে সেভ হয়ে যাবে। শুধু AI Studio-তে অ্যাপটি <strong>Share / Publish</strong> করা থাকলে APK খুললেই সরাসরি কানেক্ট হয়ে যাবে।
+          </p>
+        </div>
 
         <div className="p-3 rounded-xl bg-[#030407] border border-white/10 font-mono text-[11px] text-cyan-200 overflow-x-auto">
           git init &amp;&amp; git add . &amp;&amp; git commit -m "Brahma AI Evo Android APK" &amp;&amp; git push -u origin main

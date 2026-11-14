@@ -67,17 +67,28 @@ class BrahmaOverlayService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
+        val prefs = getSharedPreferences("brahma_overlay_prefs", Context.MODE_PRIVATE)
+        if (prefs.contains("scale")) {
+            currentScale = prefs.getFloat("scale", 0.82f).coerceIn(0.55f, 1.45f)
+        }
         val s = currentScale.coerceIn(0.55f, 1.45f)
+        val wPx = dp((200 * s).toInt())
+        val hPx = dp((38 * s).toInt())
+        val defaultX = (resources.displayMetrics.widthPixels - wPx) / 2
+        val defaultY = dp(10)
+        val maxX = (resources.displayMetrics.widthPixels - wPx).coerceAtLeast(0)
+        val maxY = (resources.displayMetrics.heightPixels - hPx).coerceAtLeast(0)
+
         overlayParams = WindowManager.LayoutParams(
-            dp((200 * s).toInt()),
-            dp((38 * s).toInt()),
+            wPx,
+            hPx,
             type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = (resources.displayMetrics.widthPixels - dp((200 * s).toInt())) / 2
-            y = dp(10)
+            x = prefs.getInt("pos_x", defaultX).coerceIn(0, maxX)
+            y = prefs.getInt("pos_y", defaultY).coerceIn(0, maxY)
         }
 
         windowManager.addView(notchView, overlayParams)
@@ -86,10 +97,59 @@ class BrahmaOverlayService : Service() {
 
     fun applyScale(scale: Float) {
         handler.post {
-            if (!::windowManager.isInitialized || !::notchView.isInitialized || !::overlayParams.isInitialized) return@post
             val s = scale.coerceIn(0.55f, 1.45f)
+            currentScale = s
+            getSharedPreferences("brahma_overlay_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .putFloat("scale", s)
+                .apply()
+            if (!::windowManager.isInitialized || !::notchView.isInitialized || !::overlayParams.isInitialized) return@post
             overlayParams.width = dp((200 * s).toInt())
             overlayParams.height = dp((38 * s).toInt())
+            val maxX = (resources.displayMetrics.widthPixels - overlayParams.width).coerceAtLeast(0)
+            val maxY = (resources.displayMetrics.heightPixels - overlayParams.height).coerceAtLeast(0)
+            overlayParams.x = overlayParams.x.coerceIn(0, maxX)
+            overlayParams.y = overlayParams.y.coerceIn(0, maxY)
+            try {
+                windowManager.updateViewLayout(notchView, overlayParams)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    fun snapToCorner(corner: String) {
+        handler.post {
+            if (!::windowManager.isInitialized || !::notchView.isInitialized || !::overlayParams.isInitialized) return@post
+            val maxX = (resources.displayMetrics.widthPixels - overlayParams.width).coerceAtLeast(0)
+            val maxY = (resources.displayMetrics.heightPixels - overlayParams.height).coerceAtLeast(0)
+            val margin = dp(10)
+            when (corner) {
+                "top-left" -> {
+                    overlayParams.x = margin.coerceIn(0, maxX)
+                    overlayParams.y = margin.coerceIn(0, maxY)
+                }
+                "top-right" -> {
+                    overlayParams.x = (maxX - margin).coerceIn(0, maxX)
+                    overlayParams.y = margin.coerceIn(0, maxY)
+                }
+                "bottom-left" -> {
+                    overlayParams.x = margin.coerceIn(0, maxX)
+                    overlayParams.y = (maxY - dp(36)).coerceIn(0, maxY)
+                }
+                "bottom-right" -> {
+                    overlayParams.x = (maxX - margin).coerceIn(0, maxX)
+                    overlayParams.y = (maxY - dp(36)).coerceIn(0, maxY)
+                }
+                else -> {
+                    overlayParams.x = (maxX / 2).coerceIn(0, maxX)
+                    overlayParams.y = margin.coerceIn(0, maxY)
+                }
+            }
+            getSharedPreferences("brahma_overlay_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .putInt("pos_x", overlayParams.x)
+                .putInt("pos_y", overlayParams.y)
+                .apply()
             try {
                 windowManager.updateViewLayout(notchView, overlayParams)
             } catch (_: Exception) {
@@ -193,7 +253,13 @@ class BrahmaOverlayService : Service() {
                     return true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!isDragging) {
+                    if (isDragging) {
+                        getSharedPreferences("brahma_overlay_prefs", Context.MODE_PRIVATE)
+                            .edit()
+                            .putInt("pos_x", overlayParams.x)
+                            .putInt("pos_y", overlayParams.y)
+                            .apply()
+                    } else {
                         val launch = packageManager.getLaunchIntentForPackage(packageName)?.apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                         }

@@ -173,6 +173,7 @@ export interface BrahmaNativeBridge {
   updateOverlayState?: (state: string, voiceLevel: number, lookX: number, lookY: number) => void;
   updateOverlayMood?: (mood: string) => void;
   updateOverlayScale?: (scale: number) => void;
+  moveOverlayToCorner?: (corner: string) => void;
   runInTermux?: (command: string) => boolean;
   installApkFile?: (fileName: string) => boolean;
   getPermissionStatusJson?: () => string;
@@ -247,17 +248,39 @@ function sanitizeSettingsObject(parsed: Partial<BrahmaSettings> & Record<string,
 }
 
 export function loadBrahmaSettings(): BrahmaSettings {
+  const nativeApk = isNativeApkRuntime();
   try {
     const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_SETTINGS };
+    if (!raw) {
+      const initial: BrahmaSettings = {
+        ...DEFAULT_SETTINGS,
+        serverUrl: nativeApk ? DEFAULT_CLOUD_SERVER_URL : '',
+      };
+      if (nativeApk) {
+        try {
+          localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(initial));
+        } catch {
+          // ignore
+        }
+      }
+      return initial;
+    }
     const parsed = JSON.parse(raw) as Partial<BrahmaSettings> & Record<string, unknown>;
     const clean = sanitizeSettingsObject(parsed);
-    if ('geminiApiKey' in parsed || 'verifiedModel' in parsed) {
+    let dirty = 'geminiApiKey' in parsed || 'verifiedModel' in parsed;
+    if (nativeApk && !clean.serverUrl.trim()) {
+      clean.serverUrl = DEFAULT_CLOUD_SERVER_URL;
+      dirty = true;
+    }
+    if (dirty) {
       localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(clean));
     }
     return clean;
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return {
+      ...DEFAULT_SETTINGS,
+      serverUrl: nativeApk ? DEFAULT_CLOUD_SERVER_URL : '',
+    };
   }
 }
 
@@ -996,19 +1019,30 @@ export async function brahmaFetch(path: string, init?: RequestInit): Promise<Res
   const baseUrl = getApiBaseUrl();
   const fullUrl = `${baseUrl}${path}`;
 
+  const attemptFetch = async (): Promise<Response> => {
+    try {
+      const res = await fetch(fullUrl, init);
+      if ((res.status === 502 || res.status === 503) && baseUrl) {
+        await new Promise((r) => setTimeout(r, 950));
+        return await fetch(fullUrl, init);
+      }
+      return res;
+    } catch (err) {
+      if (baseUrl && isNativeApkRuntime()) {
+        const nativeRes = tryNativeHttpFetch(fullUrl, init);
+        if (nativeRes) return nativeRes;
+      }
+      throw err;
+    }
+  };
+
   try {
-    const res = await fetch(fullUrl, init);
+    const res = await attemptFetch();
     if (res.status === 404 && isNativeApkRuntime()) {
       return handleStandaloneFallback(path, init);
     }
     return res;
   } catch {
-    if (baseUrl && isNativeApkRuntime()) {
-      const nativeRes = tryNativeHttpFetch(fullUrl, init);
-      if (nativeRes && nativeRes.status !== 404) {
-        return nativeRes;
-      }
-    }
     if (baseUrl && !isNativeApkRuntime()) {
       try {
         return await fetch(path, init);

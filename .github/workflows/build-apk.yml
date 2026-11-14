@@ -21,6 +21,8 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies & build web bundle
+        env:
+          VITE_SERVER_URL: ${{ vars.BRAHMA_SERVER_URL || 'https://ais-pre-puu2xux3jy53m6hmqddpbp-91841391142.asia-east1.run.app' }}
         run: |
           npm install --no-audit --no-fund || npm install --no-audit --no-fund --legacy-peer-deps
           npm run lint
