@@ -37,7 +37,11 @@
             android:name=".BrahmaOverlayService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="specialUse" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Dynamic Notch floating AI assistant overlay" />
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

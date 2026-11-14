@@ -11,6 +11,8 @@ import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -35,7 +37,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(webView)
 
         val assetLoader = WebViewAssetLoader.Builder()
-            .addPathHandler("/") { rawPath ->
+            .addPathHandler("/", WebViewAssetLoader.PathHandler { rawPath ->
                 val cleanPath = rawPath.trimStart('/').ifEmpty { "index.html" }
                 val assetPath = if (cleanPath.startsWith("public/")) cleanPath else "public/$cleanPath"
                 try {
@@ -50,11 +52,11 @@ class MainActivity : AppCompatActivity() {
                         assetPath.endsWith(".woff2") -> "font/woff2"
                         else -> "application/octet-stream"
                     }
-                    android.webkit.WebResourceResponse(mime, "UTF-8", assets.open(assetPath))
+                    WebResourceResponse(mime, "UTF-8", assets.open(assetPath))
                 } catch (_: Exception) {
                     null
                 }
-            }
+            })
             .build()
 
         val settings: WebSettings = webView.settings
@@ -68,9 +70,12 @@ class MainActivity : AppCompatActivity() {
 
         webView.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(
-                view: WebView,
-                request: android.webkit.WebResourceRequest
-            ) = assetLoader.shouldInterceptRequest(request.url)
+                view: WebView?,
+                request: WebResourceRequest?
+            ): WebResourceResponse? {
+                val url = request?.url ?: return null
+                return assetLoader.shouldInterceptRequest(url)
+            }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
