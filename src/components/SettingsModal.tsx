@@ -31,6 +31,7 @@ import {
   Wifi,
   WifiOff,
   Activity,
+  Play,
 } from 'lucide-react';
 import {
   autoDiscoveryApkServer,
@@ -40,10 +41,12 @@ import {
   getBrahmaNative,
   getPermissionStatuses,
   isNativeApkRuntime,
+  launchTermuxLocalServer,
   loadBrahmaSettings,
   requestPermissionByKey,
   saveBrahmaSettings,
   TERMUX_LOCAL_SERVER_URL,
+  TERMUX_LOCAL_SETUP_COMMAND,
   verifyServerConnection,
   type AndroidPermissionStatus,
   type BrahmaSettings,
@@ -214,6 +217,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     } catch {
       // ignore
     }
+  };
+
+  const handleLaunchTermuxServer = async () => {
+    updateField('serverUrl', TERMUX_LOCAL_SERVER_URL);
+    try {
+      void navigator.clipboard?.writeText(TERMUX_LOCAL_SETUP_COMMAND);
+    } catch {
+      // ignore
+    }
+    const launched = launchTermuxLocalServer();
+    if (launched) {
+      setSavedNotice(
+        'Termux-এ লোকাল সার্ভার কমান্ড পাঠানো হয়েছে! সার্ভার চালু হলে ২-৫ সেকেন্ড পর Verify / Refresh চাপুন।'
+      );
+      window.setTimeout(() => void checkServerStatus(TERMUX_LOCAL_SERVER_URL), 2800);
+    } else {
+      setSavedNotice(
+        'Termux কমান্ড কপি করা হয়েছে — Termux অ্যাপ খুলে পেস্ট করে চালান, তারপর http://127.0.0.1:3000 Verify করুন।'
+      );
+    }
+    window.setTimeout(() => setSavedNotice(null), 4500);
   };
 
   const handleSnapNotchCorner = (
@@ -487,17 +511,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex flex-wrap gap-1.5">
                   <button
                     type="button"
-                    onClick={() => void applyPresetServer(DEFAULT_CLOUD_SERVER_URL)}
-                    className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/35 text-[11px] font-semibold text-emerald-200 cursor-pointer"
+                    onClick={() => void handleLaunchTermuxServer()}
+                    className="px-2.5 py-1.5 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-[#020305] text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer"
                   >
-                    Use Cloud Shared URL
+                    <Play className="w-3 h-3" />
+                    <span>Run Server in Termux (ফ্রি)</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => void applyPresetServer(TERMUX_LOCAL_SERVER_URL)}
                     className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/15 text-[11px] font-semibold text-slate-200 cursor-pointer"
                   >
-                    Use Termux Local (127.0.0.1:3000)
+                    Connect 127.0.0.1:3000
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void applyPresetServer(DEFAULT_CLOUD_SERVER_URL)}
+                    className="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/35 text-[11px] font-semibold text-emerald-200 cursor-pointer"
+                  >
+                    Use Cloud Shared URL
                   </button>
                   <button
                     type="button"
@@ -515,59 +547,57 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                 </div>
 
-                <div className="p-3 rounded-xl bg-[#06080c] border border-emerald-500/25 text-[11px] text-slate-300 space-y-2">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <span className="text-emerald-300 font-semibold">
-                      ডিফল্ট Cloud Server URL (APK-তে আগে থেকেই অটো-সেভ করা):
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => copyServerUrl(DEFAULT_CLOUD_SERVER_URL)}
-                      className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/15 text-[10px] text-white inline-flex items-center gap-1 cursor-pointer"
-                    >
-                      <Copy className="w-3 h-3" /> Copy
-                    </button>
+                {/* No-Billing Clear Explanation & Alternatives */}
+                <div className="p-3 rounded-xl bg-[#06080c] border border-cyan-500/30 text-[11px] text-slate-300 space-y-2">
+                  <div className="font-bold text-cyan-200">
+                    কেন লগইন/বিলিং এরর দেখাচ্ছে ও বিনা খরচে APK চালানোর বিকল্প উপায়:
+                  </div>
+                  <div className="space-y-1.5 leading-relaxed">
+                    <div>
+                      • <strong>কেন এরর দেখাচ্ছিল?</strong> <code className="text-amber-300">aistudio.google.com/apps/...</code> হলো ওয়েব এডিটর পেজের লিংক (সার্ভার API নয়)। এছাড়া AI Studio-তে <em>Publish</em> করতে Google Cloud Billing লাগে (<em>No billing setup</em> থাকলে <code>ais-pre-...run.app</code> পাবলিক হয় না), আর <em>Restricted Share</em> লিংক ফোনের APK WebView-তে খোলে না।
+                    </div>
+                    <div>
+                      • <strong>বিকল্প ১ — ফোনেই Termux Local Server (১০০% ফ্রি):</strong> উপরের <strong>Run Server in Termux</strong> চাপুন বা নিচের কমান্ডটি Termux-এ চালিয়ে <code className="text-cyan-300">http://127.0.0.1:3000</code> ব্যবহার করুন — কোনো Cloud বিলিং লাগবে না, পুরো AI চ্যাট, ভয়েস ও টার্মিনাল চলবে!
+                    </div>
+                    <div>
+                      • <strong>বিকল্প ২ — ফ্রি Node.js হোস্ট (Render / Koyeb / Railway):</strong> আপনার GitHub repo যেকোনো ফ্রি Node.js হোস্টে ডিপ্লয় করে পাওয়া <code className="text-emerald-300">https://...</code> লিংকটি নিচে বসিয়ে দিন (অথবা GitHub Repo Variable <code className="text-emerald-300">BRAHMA_SERVER_URL</code>-এ দিন)।
+                    </div>
+                    <div>
+                      • <strong>বিকল্প ৩ — Standalone Offline APK:</strong> সার্ভার ছাড়াই অ্যাপ খোলা, ব্যাক/হোম, স্ক্রিনশট, স্মার্ট হোম, সার্কিট প্রিসেট ও হোলো-গ্লোব সরাসরি ফোনেই কাজ করবে।
+                    </div>
                   </div>
 
-                  <a
-                    href={DEFAULT_CLOUD_SERVER_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-mono text-[10px] text-cyan-300 hover:text-cyan-200 underline break-all inline-flex items-center gap-1"
-                  >
-                    <span>{DEFAULT_CLOUD_SERVER_URL}</span>
-                    <ExternalLink className="w-3 h-3 shrink-0" />
-                  </a>
+                  <div className="pt-2 border-t border-white/10 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-semibold text-emerald-300">
+                        Termux One-Line Server Setup Command:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => copyServerUrl(TERMUX_LOCAL_SETUP_COMMAND)}
+                        className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/15 text-[10px] text-white inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Copy className="w-3 h-3" /> Copy Command
+                      </button>
+                    </div>
+                    <div className="p-2 rounded-lg bg-black/60 border border-white/10 font-mono text-[10px] text-emerald-200 break-all select-all">
+                      {TERMUX_LOCAL_SETUP_COMMAND}
+                    </div>
+                  </div>
 
-                  <div className="pt-1.5 border-t border-white/10 text-[11px] text-slate-300 space-y-1 leading-relaxed">
-                    <div className="font-semibold text-white">Server URL কোথায় পাবেন ও কীভাবে চালাবেন?</div>
-                    <div>
-                      ১. <strong>GitHub APK (অটো ডিফল্ট):</strong> GitHub থেকে APK নামিয়ে ইনস্টল করলে উপরের Cloud Server URL আগে থেকেই সেট করা থাকবে — শুধু AI Studio থেকে অ্যাপটি একবার <strong>Share / Publish</strong> করে রাখলেই অটোমেটিক কানেক্ট হয়ে যাবে।
-                    </div>
-                    <div>
-                      ২. <strong>সরাসরি Browser / PWA ইনস্টল:</strong> ফোনের Chrome-এ{' '}
-                      <a
-                        href={DEFAULT_CLOUD_SERVER_URL}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-cyan-300 underline"
-                      >
-                        এই লিংকটি
-                      </a>{' '}
-                      খুলে <strong>Install App</strong> চাপলে কোনো Server URL ছাড়াই চলবে।
-                    </div>
-                    <div>
-                      ৩. <strong>সার্ভার স্ট্যাটাস চেক:</strong>{' '}
-                      <a
-                        href={`${DEFAULT_CLOUD_SERVER_URL}/api/health`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-emerald-300 underline font-mono text-[10px]"
-                      >
-                        /api/health লিংক দেখুন
-                      </a>{' '}
-                      — অথবা ফোনের Termux-এ চালালে <code className="text-cyan-300">http://127.0.0.1:3000</code> চাপুন।
-                    </div>
+                  <div className="pt-1.5 border-t border-white/10 flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-[10px] text-slate-400">
+                      GitHub APK Default Cloud URL:
+                    </span>
+                    <a
+                      href={DEFAULT_CLOUD_SERVER_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono text-[10px] text-cyan-300 hover:text-cyan-200 underline break-all inline-flex items-center gap-1"
+                    >
+                      <span>{DEFAULT_CLOUD_SERVER_URL}</span>
+                      <ExternalLink className="w-3 h-3 shrink-0" />
+                    </a>
                   </div>
                 </div>
 
@@ -1049,10 +1079,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </div>
                     </div>
 
-                    {/* Quick Discovery Endpoints */}
+                    {/* Quick Discovery Endpoints + 1-Tap Termux Launch */}
                     <div className="p-4 rounded-2xl bg-[#0d111a] border border-white/10 space-y-2.5">
-                      <div className="text-xs font-bold text-white uppercase tracking-wider">
-                        Discovery Priority Endpoints
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="text-xs font-bold text-white uppercase tracking-wider">
+                          Discovery Priority Endpoints
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleLaunchTermuxServer()}
+                          className="px-2.5 py-1 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-[#020305] text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Play className="w-3 h-3" />
+                          <span>Launch Termux Server</span>
+                        </button>
                       </div>
                       <div className="space-y-1.5 text-[11px] font-mono">
                         <div className="flex items-center justify-between gap-2 p-2 rounded-lg bg-[#06080c] border border-white/10">
@@ -1076,6 +1116,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           </button>
                         </div>
                       </div>
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                        নোট: GitHub-এ নতুন কোড push করলে GitHub Actions থেকে আপডেটেড APK তৈরি হবে (এই <strong>System</strong> ট্যাব ও উন্নত অফলাইন মোডসহ)।
+                      </p>
                     </div>
                   </>
                 );

@@ -15,7 +15,14 @@ import {
   Server,
 } from 'lucide-react';
 import type { LanguageMode, TerminalState } from '../types/brahma';
-import { brahmaFetch, DEFAULT_CLOUD_SERVER_URL } from '../lib/brahmaClient';
+import {
+  brahmaFetch,
+  DEFAULT_CLOUD_SERVER_URL,
+  launchTermuxLocalServer,
+  saveBrahmaSettings,
+  TERMUX_LOCAL_SERVER_URL,
+  TERMUX_LOCAL_SETUP_COMMAND,
+} from '../lib/brahmaClient';
 
 interface AndroidStatusData {
   readyForGithubApk: boolean;
@@ -45,6 +52,7 @@ export const TermuxAndApkPanel: React.FC<TermuxAndApkPanelProps> = ({
   const [androidStatus, setAndroidStatus] = useState<AndroidStatusData | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [copiedCmd, setCopiedCmd] = useState(false);
 
   useEffect(() => {
     brahmaFetch('/api/android/status')
@@ -314,41 +322,87 @@ export const TermuxAndApkPanel: React.FC<TermuxAndApkPanelProps> = ({
           </div>
         )}
 
-        {/* Pre-Configured Default Server URL Info */}
-        <div className="p-3.5 rounded-xl bg-[#06080c] border border-emerald-500/25 space-y-2 text-xs">
+        {/* Pre-Configured Server URL + 1-Tap Termux Local Server */}
+        <div className="p-3.5 rounded-xl bg-[#06080c] border border-emerald-500/25 space-y-3 text-xs">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2 font-semibold text-emerald-300">
               <Server className="w-4 h-4" />
-              <span>Pre-Configured Default Server URL (APK-তে অটো সেভ থাকবে)</span>
+              <span>বিনা খরচে ফোনে সার্ভার চালান (Termux 1-Tap Local Server)</span>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard?.writeText(DEFAULT_CLOUD_SERVER_URL);
-                setCopiedUrl(true);
-                window.setTimeout(() => setCopiedUrl(false), 2000);
-              }}
-              className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-[11px] text-white inline-flex items-center gap-1 cursor-pointer"
-            >
-              {copiedUrl ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedUrl ? 'Copied!' : 'Copy URL'}</span>
-            </button>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  saveBrahmaSettings({ serverUrl: TERMUX_LOCAL_SERVER_URL });
+                  try {
+                    void navigator.clipboard?.writeText(TERMUX_LOCAL_SETUP_COMMAND);
+                  } catch {
+                    // ignore
+                  }
+                  const ok = launchTermuxLocalServer();
+                  setStatusMessage(
+                    ok
+                      ? 'Termux-এ লোকাল ব্রহ্মা সার্ভার কমান্ড পাঠানো হয়েছে! সার্ভার চালু হলে Settings → System ট্যাবে Refresh চাপুন।'
+                      : 'Termux কমান্ড কপি করা হয়েছে — Termux খুলে পেস্ট করে চালান এবং Settings-এ http://127.0.0.1:3000 দিন।'
+                  );
+                }}
+                className="px-3 py-1.5 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-[#020305] font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer"
+              >
+                <Play className="w-3.5 h-3.5" />
+                <span>Launch in Termux</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(TERMUX_LOCAL_SETUP_COMMAND);
+                  setCopiedCmd(true);
+                  window.setTimeout(() => setCopiedCmd(false), 2000);
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-[11px] text-white inline-flex items-center gap-1 cursor-pointer"
+              >
+                {copiedCmd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedCmd ? 'Copied!' : 'Copy Termux Cmd'}</span>
+              </button>
+            </div>
           </div>
-          <a
-            href={DEFAULT_CLOUD_SERVER_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block font-mono text-[11px] text-cyan-300 hover:text-cyan-200 underline break-all"
-          >
-            {DEFAULT_CLOUD_SERVER_URL}
-          </a>
+
+          <div className="p-2.5 rounded-lg bg-black/50 border border-white/10 font-mono text-[10px] text-emerald-200 break-all select-all">
+            {TERMUX_LOCAL_SETUP_COMMAND}
+          </div>
+
+          <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2 flex-wrap">
+            <span className="text-[11px] text-slate-300">Default Cloud URL:</span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <a
+                href={DEFAULT_CLOUD_SERVER_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-[11px] text-cyan-300 hover:text-cyan-200 underline break-all"
+              >
+                {DEFAULT_CLOUD_SERVER_URL}
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(DEFAULT_CLOUD_SERVER_URL);
+                  setCopiedUrl(true);
+                  window.setTimeout(() => setCopiedUrl(false), 2000);
+                }}
+                className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/15 text-[10px] text-white inline-flex items-center gap-1 cursor-pointer"
+              >
+                {copiedUrl ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                <span>{copiedUrl ? 'Copied!' : 'Copy'}</span>
+              </button>
+            </div>
+          </div>
+
           <p className="text-[11px] text-slate-400 leading-relaxed">
-            GitHub Actions-এ পুশ করলে এই লিংকটি স্বয়ংক্রিয়ভাবে APK-তে সেভ হয়ে যাবে। শুধু AI Studio-তে অ্যাপটি <strong>Share / Publish</strong> করা থাকলে APK খুললেই সরাসরি কানেক্ট হয়ে যাবে।
+            AI Studio-তে Google Cloud Billing না থাকলে Publish পাবলিক হয় না — তখন ফোনের Termux-এ (<code className="text-cyan-300">127.0.0.1:3000</code>) অথবা ফ্রি Render/Koyeb-এ ডিপ্লয় করে চালাতে পারবেন। নতুন পরিবর্তনগুলো APK-তে পেতে এই কোড GitHub-এ push করে নতুন রিলিজ APK ডাউনলোড করুন।
           </p>
         </div>
 
         <div className="p-3 rounded-xl bg-[#030407] border border-white/10 font-mono text-[11px] text-cyan-200 overflow-x-auto">
-          git init &amp;&amp; git add . &amp;&amp; git commit -m "Brahma AI Evo Android APK" &amp;&amp; git push -u origin main
+          git add . &amp;&amp; git commit -m "Brahma AI Evo Update" &amp;&amp; git push -u origin main
         </div>
       </div>
     </div>

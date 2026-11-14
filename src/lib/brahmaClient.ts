@@ -197,6 +197,15 @@ export const DEFAULT_CLOUD_SERVER_URL = (
 
 export const TERMUX_LOCAL_SERVER_URL = 'http://127.0.0.1:3000';
 
+export const TERMUX_LOCAL_SETUP_COMMAND =
+  'pkg update -y && pkg install -y git nodejs && (cd ~/Brahma-ai && git pull || git clone https://github.com/rk3067273-maker/Brahma-ai.git ~/Brahma-ai) && cd ~/Brahma-ai && npm install && npm run start';
+
+export function launchTermuxLocalServer(): boolean {
+  const native = getBrahmaNative();
+  if (!native?.runInTermux) return false;
+  return Boolean(native.runInTermux(TERMUX_LOCAL_SETUP_COMMAND));
+}
+
 const SETTINGS_STORAGE_KEY = 'brahma_settings_v1';
 const SKILLS_STORAGE_KEY = 'brahma_local_skills_v1';
 const AUTOMATIONS_STORAGE_KEY = 'brahma_local_automations_v1';
@@ -424,6 +433,16 @@ export async function verifyServerConnection(
   url?: string
 ): Promise<{ ok: boolean; latencyMs: number; geminiConfigured: boolean; resolvedUrl?: string; message: string }> {
   const clean = (url || '').trim().replace(/\/+$/, '');
+  if (clean && /^https?:\/\/(www\.)?(ai\.studio|aistudio\.google\.com|github\.com)(\/|$)/i.test(clean)) {
+    return {
+      ok: false,
+      latencyMs: 0,
+      geminiConfigured: false,
+      message:
+        'এটি ওয়েবসাইট/এডিটর লিংক (ai.studio / github), ব্রহ্মা সার্ভার API URL নয়। ফোনে চালাতে নিচের "Run Server in Termux (127.0.0.1:3000)" অথবা ফ্রি Render/Koyeb ডিপ্লয় করা সার্ভার URL ব্যবহার করুন।',
+    };
+  }
+
   const targetBase = clean || (isNativeApkRuntime() ? DEFAULT_CLOUD_SERVER_URL : '');
   const endpoint = targetBase ? `${targetBase}/api/health` : '/api/health';
 
@@ -445,7 +464,7 @@ export async function verifyServerConnection(
         latencyMs,
         geminiConfigured: false,
         message:
-          'এই URL-টিতে Google লগইন প্রয়োজন (Dev URL)। APK-র জন্য AI Studio থেকে অ্যাপটি Publish/Share করে Shared App URL ব্যবহার করুন অথবা Termux (http://127.0.0.1:3000) চালান।',
+          'এই URL-টিতে Google লগইন প্রয়োজন (Restricted Share / Dev URL)। Google Cloud বিলিং ছাড়া Publish না হলে APK-তে সরাসরি Termux (http://127.0.0.1:3000) বা ফ্রি Render/Koyeb সার্ভার URL ব্যবহার করুন।',
       };
     }
 
@@ -714,6 +733,151 @@ function executeAndroidIntentFromMessage(message: string): string | null {
   return null;
 }
 
+interface OfflineCircuitPresetEntry {
+  id: string;
+  title: string;
+  description: string;
+  data: CircuitSchematic;
+}
+
+const OFFLINE_CIRCUIT_PRESETS: OfflineCircuitPresetEntry[] = [
+  {
+    id: 'esp-dht',
+    title: 'Connecting ESP32 to DHT11 Sensor',
+    description: 'Standalone offline schematic preset for ESP32 + DHT11.',
+    data: {
+      title: 'Connecting ESP32 to DHT11 Sensor',
+      description: 'Temperature & humidity digital wiring on 3.3V logic.',
+      components: [
+        {
+          id: 'esp32',
+          name: 'ESP32 DevKit',
+          subtitle: '3.3V MCU',
+          highlight: true,
+          left_pins: [],
+          right_pins: [
+            { name: '3V3', color: '#f97316' },
+            { name: 'GND', color: '#f8fafc' },
+            { name: 'GPIO4', badge: 'DATA', color: '#fbbf24' },
+          ],
+        },
+        {
+          id: 'dht11',
+          name: 'DHT11 Sensor',
+          subtitle: 'Temp & Humidity',
+          left_pins: [
+            { name: 'VCC', color: '#f97316' },
+            { name: 'GND', color: '#f8fafc' },
+            { name: 'DATA', color: '#fbbf24' },
+          ],
+          right_pins: [],
+        },
+      ],
+      wires: [
+        { from: 'esp32:right:3V3', to: 'dht11:left:VCC', color: '#f97316', label: '3.3V', step: 1 },
+        { from: 'esp32:right:GND', to: 'dht11:left:GND', color: '#f8fafc', label: 'GND', step: 2 },
+        { from: 'esp32:right:GPIO4', to: 'dht11:left:DATA', color: '#fbbf24', label: 'Signal', step: 3 },
+      ],
+      warnings: ['Use 3.3V logic on ESP32 GPIO pins; add a 10k pull-up resistor if using bare 4-pin DHT11.'],
+      steps: ['Connect 3V3 to VCC', 'Connect GND to GND', 'Connect GPIO4 to DATA'],
+    },
+  },
+  {
+    id: 'arduino-hcsr04',
+    title: 'Arduino Uno + HC-SR04 Ultrasonic Sensor',
+    description: 'Distance measurement ultrasonic wiring for Arduino.',
+    data: {
+      title: 'Arduino Uno + HC-SR04 Ultrasonic Sensor',
+      description: '5V ultrasonic trigger & echo timing schematic.',
+      components: [
+        {
+          id: 'uno',
+          name: 'Arduino Uno',
+          subtitle: '5V AVR',
+          highlight: true,
+          left_pins: [],
+          right_pins: [
+            { name: '5V', color: '#ef4444' },
+            { name: 'GND', color: '#f8fafc' },
+            { name: 'D9', badge: 'TRIG', color: '#22d3ee' },
+            { name: 'D10', badge: 'ECHO', color: '#a855f7' },
+          ],
+        },
+        {
+          id: 'hcsr04',
+          name: 'HC-SR04',
+          subtitle: 'Ultrasonic Module',
+          left_pins: [
+            { name: 'VCC', color: '#ef4444' },
+            { name: 'GND', color: '#f8fafc' },
+            { name: 'TRIG', color: '#22d3ee' },
+            { name: 'ECHO', color: '#a855f7' },
+          ],
+          right_pins: [],
+        },
+      ],
+      wires: [
+        { from: 'uno:right:5V', to: 'hcsr04:left:VCC', color: '#ef4444', label: '5V', step: 1 },
+        { from: 'uno:right:GND', to: 'hcsr04:left:GND', color: '#f8fafc', label: 'GND', step: 2 },
+        { from: 'uno:right:D9', to: 'hcsr04:left:TRIG', color: '#22d3ee', label: 'TRIG', step: 3 },
+        { from: 'uno:right:D10', to: 'hcsr04:left:ECHO', color: '#a855f7', label: 'ECHO', step: 4 },
+      ],
+      warnings: ['Keep HC-SR04 away from soft sound-absorbing surfaces for accurate echo timing.'],
+      steps: ['Connect 5V to VCC', 'Connect GND to GND', 'Connect D9 to TRIG', 'Connect D10 to ECHO'],
+    },
+  },
+  {
+    id: 'esp32-oled',
+    title: 'ESP32 + 0.96" I2C OLED (SSD1306)',
+    description: 'I2C OLED display wiring for ESP32.',
+    data: {
+      title: 'ESP32 + 0.96" I2C OLED (SSD1306)',
+      description: 'Standard hardware I2C GPIO21 (SDA) and GPIO22 (SCL) bus.',
+      components: [
+        {
+          id: 'esp32',
+          name: 'ESP32 DevKit',
+          subtitle: 'I2C Host',
+          highlight: true,
+          left_pins: [],
+          right_pins: [
+            { name: '3V3', color: '#f97316' },
+            { name: 'GND', color: '#f8fafc' },
+            { name: 'GPIO22', badge: 'SCL', color: '#38bdf8' },
+            { name: 'GPIO21', badge: 'SDA', color: '#34d399' },
+          ],
+        },
+        {
+          id: 'oled',
+          name: 'SSD1306 OLED',
+          subtitle: '128x64 I2C',
+          left_pins: [
+            { name: 'VCC', color: '#f97316' },
+            { name: 'GND', color: '#f8fafc' },
+            { name: 'SCL', color: '#38bdf8' },
+            { name: 'SDA', color: '#34d399' },
+          ],
+          right_pins: [],
+        },
+      ],
+      wires: [
+        { from: 'esp32:right:3V3', to: 'oled:left:VCC', color: '#f97316', label: '3.3V', step: 1 },
+        { from: 'esp32:right:GND', to: 'oled:left:GND', color: '#f8fafc', label: 'GND', step: 2 },
+        { from: 'esp32:right:GPIO22', to: 'oled:left:SCL', color: '#38bdf8', label: 'SCL', step: 3 },
+        { from: 'esp32:right:GPIO21', to: 'oled:left:SDA', color: '#34d399', label: 'SDA', step: 4 },
+      ],
+      warnings: ['Check whether OLED module I2C address is 0x3C or 0x3D before flashing firmware.'],
+      steps: ['Connect 3V3 to VCC', 'Connect GND to GND', 'Connect GPIO22 to SCL', 'Connect GPIO21 to SDA'],
+    },
+  },
+];
+
+function pickOfflineCircuitPreset(query: string): OfflineCircuitPresetEntry {
+  if (/oled|ssd1306|i2c|display/i.test(query)) return OFFLINE_CIRCUIT_PRESETS[2];
+  if (/ultrasonic|hc-?sr04|arduino|distance/i.test(query)) return OFFLINE_CIRCUIT_PRESETS[1];
+  return OFFLINE_CIRCUIT_PRESETS[0];
+}
+
 async function handleStandaloneFallback(
   path: string,
   init?: RequestInit
@@ -735,12 +899,15 @@ async function handleStandaloneFallback(
     return jsonRes({ ok: false, mode: 'offline-local', geminiConfigured: false });
   }
 
-  // 2. Chat (Local device reflexes work offline; AI brain requires server connection)
+  // 2. Chat (Standalone offline reflexes work cleanly on APK without server)
   if (path === '/api/chat' && method === 'POST') {
     const t0 = Date.now();
     const message = String(bodyObj.message || '').trim();
+    const langMode = String(bodyObj.languageMode || 'bn');
+    const settings = loadBrahmaSettings();
+    const botName = String(bodyObj.assistantName || settings.assistantName || 'ব্রহ্মা AI');
 
-    // Popup visibility voice triggers work offline too
+    // Popup visibility voice triggers
     if (/(?:পপ\s*-?\s*আপ|উইন্ডো|ডিসপ্লে).*(?:দেখাও|খোলো|ওপেন|show|open)/i.test(message) || /show\s+popup/i.test(message)) {
       return jsonRes({
         reply: 'অবশ্যই, লাইভ টার্মিনাল পপ-আপ ডিসপ্লে স্ক্রিনে দেখানো হচ্ছে।',
@@ -774,14 +941,126 @@ async function handleStandaloneFallback(
       });
     }
 
-    return jsonRes(
-      {
-        error: isNativeApkRuntime()
-          ? 'সার্ভারের সাথে সংযোগ নেই। অনুগ্রহ করে ⚙ Settings → নাম ও সার্ভার সংযোগ ট্যাবে গিয়ে আপনার সার্ভার URL যাচাই করুন।'
-          : 'ব্রহ্মা AI সার্ভারের সাথে সংযোগ স্থাপন করা যায়নি। অনুগ্রহ করে ইন্টারনেট বা সার্ভার স্ট্যাটাস চেক করুন।',
-      },
-      503
-    );
+    // Offline Smart Home local mesh toggle
+    if (/(?:লাইট|light|led|এসি|ac|ফ্যান|fan|টিভি|tv|প্লাগ|plug)/i.test(message) && /(?:চালু|অন|জ্বালাও|খোলো|on|start|বন্ধ|অফ|নিভাও|off|stop)/i.test(message)) {
+      const turnOn = /(?:চালু|অন|জ্বালাও|খোলো|on|start)/i.test(message) && !/(?:বন্ধ|অফ|নিভাও|off|stop)/i.test(message);
+      const devices = getLocalStore(SMART_HOME_STORAGE_KEY, DEFAULT_LOCAL_DEVICES);
+      const targetType = /(?:এসি|ac)/i.test(message)
+        ? 'ac'
+        : /(?:ফ্যান|fan)/i.test(message)
+          ? 'fan'
+          : 'light';
+      const dev = devices.find((d) => d.type === targetType) || devices[0];
+      if (dev) {
+        dev.power = turnOn;
+        setLocalStore(SMART_HOME_STORAGE_KEY, devices);
+        return jsonRes({
+          reply: `${dev.name} ${turnOn ? 'চালু' : 'বন্ধ'} করা হয়েছে।`,
+          tier: 1,
+          intent: 'smart_home',
+          orbState: 'EXECUTING',
+          latencyMs: Date.now() - t0,
+        });
+      }
+    }
+
+    // Offline HoloGlobe / ISS trigger
+    if (/(?:globe|গ্লোব|পৃথিবী|মানচিত্র|iss|satellite|স্যাটেলাইট)/i.test(message)) {
+      return jsonRes({
+        reply: 'হোলোগ্রাফিক গ্লোব এবং লাইভ ISS ট্র্যাকার খোলা হচ্ছে।',
+        tier: 1,
+        intent: 'globe_tracking',
+        moduleToOpen: 'globe',
+        toolPayload: { action: 'track_iss', label: 'ISS Live Orbit' },
+        orbState: 'EXECUTING',
+        latencyMs: Date.now() - t0,
+      });
+    }
+
+    // Offline Circuit HUD trigger
+    if (/(?:circuit|সার্কিট|schematic|dht11|hcsr04|ultrasonic|oled|esp32|arduino)/i.test(message)) {
+      const preset = pickOfflineCircuitPreset(message);
+      return jsonRes({
+        reply: `${preset.title} সার্কিট ডায়াগ্রাম অফলাইন প্রিসেট থেকে খোলা হলো।`,
+        tier: 1,
+        intent: 'circuit_hud',
+        moduleToOpen: 'circuit',
+        toolPayload: preset.data,
+        orbState: 'EXECUTING',
+        latencyMs: Date.now() - t0,
+      });
+    }
+
+    // Live device time & date offline
+    if (/(?:সময় কত|কটা বাজে|এখন কটা|তারিখ|আজ কী বার|time|date|samay|kitne baje)/i.test(message)) {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString(langMode === 'hi' ? 'hi-IN' : langMode === 'en' ? 'en-US' : 'bn-BD', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      const dateStr = now.toLocaleDateString(langMode === 'hi' ? 'hi-IN' : langMode === 'en' ? 'en-US' : 'bn-BD', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+      });
+      const reply =
+        langMode === 'en'
+          ? `It is currently ${timeStr}, ${dateStr}.`
+          : langMode === 'hi'
+            ? `अभी समय ${timeStr} है, और आज ${dateStr} है।`
+            : `এখন সময় ${timeStr}, এবং আজ ${dateStr}।`;
+      return jsonRes({
+        reply,
+        tier: 0,
+        intent: 'local_clock',
+        orbState: 'SPEAKING',
+        latencyMs: Date.now() - t0,
+      });
+    }
+
+    // Assistant identity offline
+    if (/(?:তোমার নাম|তুমি কে|who are you|what is your name|tum kaun ho|apna naam)/i.test(message)) {
+      const reply =
+        langMode === 'en'
+          ? `I am ${botName}, your personal Android companion.`
+          : langMode === 'hi'
+            ? `मेरा नाम ${botName} है, मैं आपका पर्सनल एंड्रॉयड असिस्टेंट हूँ।`
+            : `আমার নাম ${botName}, আমি আপনার পার্সোনাল অ্যান্ড্রয়েড AI অ্যাসিস্ট্যান্ট।`;
+      return jsonRes({
+        reply,
+        tier: 0,
+        intent: 'identity',
+        orbState: 'SPEAKING',
+        latencyMs: Date.now() - t0,
+      });
+    }
+
+    // Greetings offline
+    if (/^(?:hello|hi|hey|হ্যালো|হাই|নমস্কার|আসসালামু|সালাম|কেমন আছ|namaste|kaise ho)\b/i.test(message)) {
+      const reply =
+        langMode === 'en'
+          ? `Hello! ${botName} is active in standalone mode. Connect Termux local server or a cloud server in Settings for full Gemini AI.`
+          : langMode === 'hi'
+            ? `नमस्ते! ${botName} अभी ऑफलाइन मोड में तैयार है। फुल AI के लिए Settings में Termux लोकल सर्वर या अपना सर्वर URL जोड़ें।`
+            : `হ্যালো! আমি ${botName}। এখন স্ট্যান্ডঅ্যালোন অফলাইন মোডে আছি — অ্যাপ খোলা, সময়, স্মার্ট হোম ও সার্কিট কাজ করবে। সম্পূর্ণ লাইভ AI চালাতে Settings → নাম ও সার্ভার ট্যাব থেকে Termux Local Server চালু করুন।`;
+      return jsonRes({
+        reply,
+        tier: 0,
+        intent: 'greeting',
+        orbState: 'SPEAKING',
+        latencyMs: Date.now() - t0,
+      });
+    }
+
+    return jsonRes({
+      reply: isNativeApkRuntime()
+        ? 'লাইভ ক্লাউড সার্ভার সংযুক্ত নয় (Google Cloud বিলিং না থাকায় পাবলিক সার্ভার বন্ধ)। পূর্ণ AI চ্যাট ও ভয়েস চালাতে Settings → নাম ও সার্ভার ট্যাবে গিয়ে "Run Server in Termux (127.0.0.1:3000)" চালু করুন অথবা ফ্রি Render/Koyeb সার্ভার URL দিন।'
+        : 'ব্রহ্মা AI সার্ভারের সাথে সংযোগ স্থাপন করা যায়নি। অনুগ্রহ করে ইন্টারনেট বা সার্ভার স্ট্যাটাস চেক করুন।',
+      tier: 0,
+      intent: 'offline_notice',
+      orbState: 'ONLINE',
+      latencyMs: Date.now() - t0,
+    });
   }
 
   // 3. TTS -> Fallback to Native Android / Browser TTS when server is unreachable offline
@@ -1006,49 +1285,18 @@ async function handleStandaloneFallback(
 
   // 11. Circuit Presets / Solve / Office
   if (path === '/api/circuit/presets') {
-    const fallbackCircuit: CircuitSchematic = {
-      title: 'Connecting ESP32 to DHT11 Sensor',
-      description: 'Standalone offline schematic preset.',
-      components: [
-        {
-          id: 'esp32',
-          name: 'ESP32 DevKit',
-          subtitle: '3.3V MCU',
-          highlight: true,
-          left_pins: [],
-          right_pins: [
-            { name: '3V3', color: '#f97316' },
-            { name: 'GND', color: '#f8fafc' },
-            { name: 'GPIO4', badge: 'DATA', color: '#fbbf24' },
-          ],
-        },
-        {
-          id: 'dht11',
-          name: 'DHT11 Sensor',
-          subtitle: 'Temp & Humidity',
-          left_pins: [
-            { name: 'VCC', color: '#f97316' },
-            { name: 'GND', color: '#f8fafc' },
-            { name: 'DATA', color: '#fbbf24' },
-          ],
-          right_pins: [],
-        },
-      ],
-      wires: [
-        { from: 'esp32:right:3V3', to: 'dht11:left:VCC', color: '#f97316', label: '3.3V', step: 1 },
-        { from: 'esp32:right:GND', to: 'dht11:left:GND', color: '#f8fafc', label: 'GND', step: 2 },
-        { from: 'esp32:right:GPIO4', to: 'dht11:left:DATA', color: '#fbbf24', label: 'Signal', step: 3 },
-      ],
-      warnings: ['Use 3.3V logic on ESP32 GPIO pins.'],
-      steps: ['Connect 3V3 to VCC', 'Connect GND to GND', 'Connect GPIO4 to DATA'],
-    };
-    return jsonRes({ presets: [{ id: 'esp-dht', title: fallbackCircuit.title, description: fallbackCircuit.description, data: fallbackCircuit }] });
+    return jsonRes({ presets: OFFLINE_CIRCUIT_PRESETS });
   }
   if (path === '/api/circuit/solve' && method === 'POST') {
-    return jsonRes({ error: 'কাস্টম সার্কিট সলভ করার জন্য ব্রহ্মা সার্ভারের সাথে সংযোগ প্রয়োজন।' }, 503);
+    const query = String(bodyObj.query || '');
+    const matched = pickOfflineCircuitPreset(query);
+    return jsonRes({
+      schematic: matched.data,
+      offlinePreset: true,
+    });
   }
   if (path === '/api/office/generate' && method === 'POST') {
-    return jsonRes({ error: 'Office Architect ব্যবহারের জন্য ব্রহ্মা সার্ভারের সাথে সংযোগ প্রয়োজন।' }, 503);
+    return jsonRes({ error: 'Office Architect AI জেনারেট করতে Termux বা ক্লাউড সার্ভার সংযোগ প্রয়োজন।' }, 503);
   }
 
   if (path === '/api/remote/state') {
