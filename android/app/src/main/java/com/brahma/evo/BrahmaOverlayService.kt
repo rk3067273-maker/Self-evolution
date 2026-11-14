@@ -19,6 +19,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
+import kotlin.math.cos
 import kotlin.math.sin
 
 class BrahmaOverlayService : Service() {
@@ -28,6 +29,7 @@ class BrahmaOverlayService : Service() {
         @Volatile var currentVoiceLevel: Float = 0.08f
         @Volatile var targetLookX: Float = 0f
         @Volatile var targetLookY: Float = 0f
+        @Volatile var currentMood: String = "neutral"
     }
 
     private lateinit var windowManager: WindowManager
@@ -37,7 +39,7 @@ class BrahmaOverlayService : Service() {
 
     private val ticker = object : Runnable {
         override fun run() {
-            tick += 0.16f
+            tick += if (currentMood == "dizzy") 0.34f else 0.16f
             if (::notchView.isInitialized) {
                 notchView.invalidate()
             }
@@ -115,6 +117,11 @@ class BrahmaOverlayService : Service() {
         }
         private val eyeSocketPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#111827") }
         private val pupilPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#00E5FF") }
+        private val spiralPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#F59E0B")
+            style = Paint.Style.STROKE
+            strokeWidth = 2.5f
+        }
         private val browPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#E2E8F0")
             strokeWidth = 3f
@@ -144,6 +151,20 @@ class BrahmaOverlayService : Service() {
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
+            val mood = currentMood
+            borderPaint.color = when (mood) {
+                "angry" -> Color.parseColor("#AAEF4444")
+                "sad" -> Color.parseColor("#AA60A5FA")
+                "dizzy" -> Color.parseColor("#CCF59E0B")
+                else -> Color.parseColor("#4400E5FF")
+            }
+            pupilPaint.color = when (mood) {
+                "angry" -> Color.parseColor("#F43F5E")
+                "sad" -> Color.parseColor("#60A5FA")
+                "dizzy" -> Color.parseColor("#F59E0B")
+                else -> Color.parseColor("#00E5FF")
+            }
+
             val rect = RectF(2f, 2f, width - 2f, height - 2f)
             val radius = height / 2f
             canvas.drawRoundRect(rect, radius, radius, bgPaint)
@@ -156,16 +177,38 @@ class BrahmaOverlayService : Service() {
             val pupilOffsetX = targetLookX * (eyeRadius * 0.45f)
             val pupilOffsetY = targetLookY * (eyeRadius * 0.45f)
 
-            // Eyebrows
+            // Mood-expressive eyebrows
             val browY = height * 0.27f - (currentVoiceLevel * 4f)
-            canvas.drawLine(leftEyeX - eyeRadius, browY + 1f, leftEyeX + eyeRadius, browY - 1f, browPaint)
-            canvas.drawLine(rightEyeX - eyeRadius, browY - 1f, rightEyeX + eyeRadius, browY + 1f, browPaint)
+            when (mood) {
+                "angry" -> {
+                    canvas.drawLine(leftEyeX - eyeRadius, browY - 2f, leftEyeX + eyeRadius, browY + 3f, browPaint)
+                    canvas.drawLine(rightEyeX - eyeRadius, browY + 3f, rightEyeX + eyeRadius, browY - 2f, browPaint)
+                }
+                "sad" -> {
+                    canvas.drawLine(leftEyeX - eyeRadius, browY + 3f, leftEyeX + eyeRadius, browY - 2f, browPaint)
+                    canvas.drawLine(rightEyeX - eyeRadius, browY - 2f, rightEyeX + eyeRadius, browY + 3f, browPaint)
+                }
+                else -> {
+                    canvas.drawLine(leftEyeX - eyeRadius, browY + 1f, leftEyeX + eyeRadius, browY - 1f, browPaint)
+                    canvas.drawLine(rightEyeX - eyeRadius, browY - 1f, rightEyeX + eyeRadius, browY + 1f, browPaint)
+                }
+            }
 
-            // Eyes + pupils
+            // Eyes + mood pupils
             canvas.drawCircle(leftEyeX, eyeY, eyeRadius, eyeSocketPaint)
             canvas.drawCircle(rightEyeX, eyeY, eyeRadius, eyeSocketPaint)
-            canvas.drawCircle(leftEyeX + pupilOffsetX, eyeY + pupilOffsetY, eyeRadius * 0.52f, pupilPaint)
-            canvas.drawCircle(rightEyeX + pupilOffsetX, eyeY + pupilOffsetY, eyeRadius * 0.52f, pupilPaint)
+
+            if (mood == "dizzy") {
+                val spinX = cos(tick * 2.4f) * (eyeRadius * 0.35f)
+                val spinY = sin(tick * 2.4f) * (eyeRadius * 0.35f)
+                canvas.drawCircle(leftEyeX, eyeY, eyeRadius * 0.65f, spiralPaint)
+                canvas.drawCircle(rightEyeX, eyeY, eyeRadius * 0.65f, spiralPaint)
+                canvas.drawCircle(leftEyeX + spinX, eyeY + spinY, eyeRadius * 0.28f, pupilPaint)
+                canvas.drawCircle(rightEyeX - spinX, eyeY - spinY, eyeRadius * 0.28f, pupilPaint)
+            } else {
+                canvas.drawCircle(leftEyeX + pupilOffsetX, eyeY + pupilOffsetY, eyeRadius * 0.52f, pupilPaint)
+                canvas.drawCircle(rightEyeX + pupilOffsetX, eyeY + pupilOffsetY, eyeRadius * 0.52f, pupilPaint)
+            }
 
             // Multi-color dot-matrix equalizer beside the eyes
             val startX = width * 0.50f

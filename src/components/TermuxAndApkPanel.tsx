@@ -12,6 +12,7 @@ import {
   FolderGit2,
 } from 'lucide-react';
 import type { LanguageMode, TerminalState } from '../types/brahma';
+import { brahmaFetch } from '../lib/brahmaClient';
 
 interface AndroidStatusData {
   readyForGithubApk: boolean;
@@ -42,7 +43,7 @@ export const TermuxAndApkPanel: React.FC<TermuxAndApkPanelProps> = ({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/android/status')
+    brahmaFetch('/api/android/status')
       .then((r) => r.json())
       .then((d) => setAndroidStatus(d as AndroidStatusData))
       .catch(() => {});

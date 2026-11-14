@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Home, FileSpreadsheet, FileText, Presentation, Power, Download, Sparkles } from 'lucide-react';
 import type { SmartDevice } from '../types/brahma';
+import { brahmaFetch } from '../lib/brahmaClient';
 
 interface SpreadsheetResult {
   title: string;
@@ -37,7 +38,7 @@ export const SmartHomeAndOfficePanel: React.FC = () => {
   >(null);
 
   useEffect(() => {
-    fetch('/api/smart-home')
+    brahmaFetch('/api/smart-home')
       .then((r) => r.json())
       .then((d) => {
         if (Array.isArray(d.devices)) setDevices(d.devices);
@@ -48,7 +49,7 @@ export const SmartHomeAndOfficePanel: React.FC = () => {
   const updateDevice = async (id: string, patch: { power?: boolean; level?: number }) => {
     setDevices((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
     try {
-      const res = await fetch('/api/smart-home/update', {
+      const res = await brahmaFetch('/api/smart-home/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, ...patch }),
@@ -66,7 +67,7 @@ export const SmartHomeAndOfficePanel: React.FC = () => {
     setGenerating(true);
     setOfficeError(null);
     try {
-      const res = await fetch('/api/office/generate', {
+      const res = await brahmaFetch('/api/office/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ docType, topic: topic.trim() }),

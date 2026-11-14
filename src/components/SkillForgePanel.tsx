@@ -13,6 +13,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import type { SkillEntry } from '../types/brahma';
+import { brahmaFetch } from '../lib/brahmaClient';
 
 interface TestDetail {
   input: string;
@@ -49,7 +50,7 @@ export const SkillForgePanel: React.FC = () => {
 
   const loadSkills = async () => {
     try {
-      const res = await fetch('/api/skills');
+      const res = await brahmaFetch('/api/skills');
       const data = await res.json();
       if (Array.isArray(data.skills)) {
         setSkills(data.skills);
@@ -83,7 +84,7 @@ export const SkillForgePanel: React.FC = () => {
     setForging(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/skills/forge', {
+      const res = await brahmaFetch('/api/skills/forge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ goal: goal.trim() }),
@@ -107,7 +108,7 @@ export const SkillForgePanel: React.FC = () => {
     setAutoLearning(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/skills/auto-learn', { method: 'POST' });
+      const res = await brahmaFetch('/api/skills/auto-learn', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         setErrorMsg(data.error || 'Auto-Learn failed.');
@@ -126,7 +127,7 @@ export const SkillForgePanel: React.FC = () => {
     setTesting(true);
     setErrorMsg(null);
     try {
-      const res = await fetch(`/api/skills/test/${sk.id}`, { method: 'POST' });
+      const res = await brahmaFetch(`/api/skills/test/${sk.id}`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) {
         setErrorMsg(data.error || 'Crucible test execution failed.');
@@ -145,7 +146,7 @@ export const SkillForgePanel: React.FC = () => {
     setRunning(true);
     setErrorMsg(null);
     try {
-      const res = await fetch(`/api/skills/run/${sk.id}`, {
+      const res = await brahmaFetch(`/api/skills/run/${sk.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ input: runInput }),
@@ -168,7 +169,7 @@ export const SkillForgePanel: React.FC = () => {
     setEvolving(true);
     setErrorMsg(null);
     try {
-      const res = await fetch(`/api/skills/evolve/${sk.id}`, {
+      const res = await brahmaFetch(`/api/skills/evolve/${sk.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ instruction: evolvePrompt.trim() }),
@@ -189,7 +190,7 @@ export const SkillForgePanel: React.FC = () => {
   };
 
   const handleDelete = async (id: string) => {
-    await fetch(`/api/skills/${id}`, { method: 'DELETE' });
+    await brahmaFetch(`/api/skills/${id}`, { method: 'DELETE' });
     setSkills((prev) => prev.filter((s) => s.id !== id));
     if (selectedSkill?.id === id) setSelectedSkill(null);
   };

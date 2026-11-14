@@ -10,6 +10,7 @@ import {
   Sparkles,
   Home,
   Smartphone,
+  Settings,
 } from 'lucide-react';
 import type {
   BrahmaTab,
@@ -25,7 +26,7 @@ import { NeuralCommandCenter } from './components/NeuralCommandCenter';
 import { LiveVoiceStudio } from './components/LiveVoiceStudio';
 import { LiveVisionPanel } from './components/LiveVisionPanel';
 import { TermuxAndApkPanel } from './components/TermuxAndApkPanel';
-import { DynamicNotchOverlay } from './components/DynamicNotchOverlay';
+import { DynamicNotchOverlay, type NotchMood } from './components/DynamicNotchOverlay';
 import { TerminalPopupWindow } from './components/TerminalPopupWindow';
 import { AutomationPanel } from './components/AutomationPanel';
 import { HoloGlobePanel } from './components/HoloGlobePanel';
@@ -34,6 +35,13 @@ import { SkillForgePanel } from './components/SkillForgePanel';
 import { SmartHomeAndOfficePanel } from './components/SmartHomeAndOfficePanel';
 import { RemoteAndIdentityPanel } from './components/RemoteAndIdentityPanel';
 import { OfflineIndicator, PWAInstallButton } from './components/PWAInstallButton';
+import { SettingsModal } from './components/SettingsModal';
+import {
+  brahmaFetch,
+  getBrahmaNative,
+  loadBrahmaSettings,
+  type BrahmaSettings,
+} from './lib/brahmaClient';
 
 const NAV_ITEMS: { id: BrahmaTab; label: string; shortLabel: string; icon: typeof Terminal }[] = [
   { id: 'command', label: 'Neural Core', shortLabel: 'Core', icon: Terminal },
@@ -63,6 +71,10 @@ export default function App() {
   const [pendingGlobeAction, setPendingGlobeAction] = useState<Record<string, unknown> | null>(null);
   const [voiceLevel, setVoiceLevel] = useState<number>(0.06);
   const [popupVisible, setPopupVisible] = useState<boolean>(false);
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'api' | 'permissions' | 'notch'>('api');
+  const [appSettings, setAppSettings] = useState<BrahmaSettings>(() => loadBrahmaSettings());
+  const [forcedNotchMood, setForcedNotchMood] = useState<{ mood: NotchMood; ts: number } | null>(null);
   const [terminalState, setTerminalState] = useState<TerminalState>({
     running: false,
     currentTask: '',
@@ -75,7 +87,7 @@ export default function App() {
   const levelIntervalRef = useRef<number>(0);
 
   const refreshTerminalState = useCallback(() => {
-    fetch('/api/terminal/state')
+    brahmaFetch('/api/terminal/state')
       .then((r) => r.json())
       .then((d) => {
         if (d && Array.isArray(d.lines)) {
@@ -86,7 +98,7 @@ export default function App() {
   }, []);
 
   const refreshBriefing = useCallback(() => {
-    fetch('/api/briefing')
+    brahmaFetch('/api/briefing')
       .then((r) => r.json())
       .then((d) => setBriefing(d))
       .catch(() => {});
@@ -106,7 +118,7 @@ export default function App() {
   const handleRunTerminalCommand = useCallback(async (cmd: string) => {
     setOrbState('EXECUTING');
     try {
-      const res = await fetch('/api/terminal/exec', {
+      const res = await brahmaFetch('/api/terminal/exec', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: cmd }),
@@ -131,7 +143,7 @@ export default function App() {
       setOrbState('EXECUTING');
       setTerminalState((prev) => ({ ...prev, running: true, currentTask: task }));
       try {
-        const res = await fetch('/api/terminal/agent', {
+        const res = await brahmaFetch('/api/terminal/agent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ task, languageMode }),
@@ -154,7 +166,7 @@ export default function App() {
   );
 
   const handleClearTerminal = useCallback(async () => {
-    const res = await fetch('/api/terminal/clear', { method: 'POST' });
+    const res = await brahmaFetch('/api/terminal/clear', { method: 'POST' });
     const d = await res.json();
     if (d && Array.isArray(d.lines)) {
       setTerminalState((prev) => ({ ...prev, lines: d.lines }));
@@ -169,7 +181,59 @@ export default function App() {
       currentAudioRef.current = null;
     }
     window.speechSynthesis?.cancel();
+    getBrahmaNative()?.stopNativeVoice?.();
   }, []);
+
+  const speakWithDeviceTts = useCallback(
+    async (
+      clean: string,
+      onStart?: () => void,
+      onEnd?: () => void,
+      onLevel?: (lvl: number) => void
+    ) => {
+      const langTag = languageMode === 'hi' ? 'hi-IN' : languageMode === 'en' ? 'en-US' : 'bn-IN';
+      const pitch = voiceProfile === 'deep-voinkor' ? 0.68 : voiceProfile === 'commanding' ? 0.78 : 0.85;
+      const native = getBrahmaNative();
+
+      setOrbState('SPEAKING');
+      onStart?.();
+      levelIntervalRef.current = window.setInterval(() => {
+        const lvl = 0.34 + Math.random() * 0.56;
+        setVoiceLevel(lvl);
+        onLevel?.(lvl);
+      }, 80);
+
+      if (native?.speakDeepVoice?.(clean, langTag, pitch, 0.94)) {
+        const estMs = Math.min(9000, Math.max(1800, clean.length * 68));
+        await new Promise((r) => window.setTimeout(r, estMs));
+        window.clearInterval(levelIntervalRef.current);
+        setVoiceLevel(0.05);
+        onLevel?.(0.05);
+        setOrbState('ONLINE');
+        onEnd?.();
+        return;
+      }
+
+      if (window.speechSynthesis) {
+        await new Promise<void>((resolve) => {
+          const u = new SpeechSynthesisUtterance(clean);
+          u.lang = langTag;
+          u.pitch = pitch;
+          u.rate = 0.94;
+          u.onend = () => resolve();
+          u.onerror = () => resolve();
+          window.speechSynthesis.speak(u);
+        });
+      }
+
+      window.clearInterval(levelIntervalRef.current);
+      setVoiceLevel(0.05);
+      onLevel?.(0.05);
+      setOrbState('ONLINE');
+      onEnd?.();
+    },
+    [languageMode, voiceProfile]
+  );
 
   const speakDeepVoice = useCallback(
     async (
@@ -186,7 +250,7 @@ export default function App() {
       }
 
       try {
-        const res = await fetch('/api/tts', {
+        const res = await brahmaFetch('/api/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -196,8 +260,8 @@ export default function App() {
           }),
         });
         const data = await res.json();
-        if (!res.ok || !data.audioBase64) {
-          onEnd?.();
+        if (data.useNativeTts || !res.ok || !data.audioBase64) {
+          await speakWithDeviceTts(clean, onStart, onEnd, onLevel);
           return;
         }
 
@@ -233,15 +297,14 @@ export default function App() {
           };
           audio.play().catch(() => {
             window.clearInterval(levelIntervalRef.current);
-            onEnd?.();
-            resolve();
+            void speakWithDeviceTts(clean, onStart, onEnd, onLevel).then(resolve);
           });
         });
       } catch {
-        onEnd?.();
+        await speakWithDeviceTts(clean, onStart, onEnd, onLevel);
       }
     },
-    [languageMode, stopSpeaking, voiceProfile]
+    [languageMode, speakWithDeviceTts, stopSpeaking, voiceProfile]
   );
 
   const handleSendMessage = useCallback(
@@ -263,7 +326,7 @@ export default function App() {
       setOrbState('THINKING');
 
       try {
-        const res = await fetch('/api/chat', {
+        const res = await brahmaFetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -345,12 +408,18 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex flex-col bg-[#020305] text-[#f4f6f8] overflow-hidden">
-      {/* Dynamic Notch Floating Eye-Tracking & Equalizer Overlay */}
+      {/* Dynamic Notch Floating Eye-Tracking, Mood Expressions & Dizzy Overlay */}
       <DynamicNotchOverlay
         orbState={orbState}
         voiceLevel={voiceLevel}
         terminalRunning={terminalState.running}
         popupVisible={popupVisible}
+        expressionsEnabled={appSettings.notchExpressions}
+        dizzyEnabled={appSettings.dizzyReaction}
+        forcedMood={forcedNotchMood}
+        onDizzyTriggered={(phrase) => {
+          void speakDeepVoice(phrase);
+        }}
         onTogglePopup={() => {
           setPopupVisible((v) => !v);
           refreshTerminalState();
@@ -401,8 +470,21 @@ export default function App() {
           })}
         </nav>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           <PWAInstallButton />
+
+          <button
+            type="button"
+            onClick={() => {
+              setSettingsInitialTab('api');
+              setSettingsOpen(true);
+            }}
+            title="Settings, API Keys & Android Permissions"
+            className="px-2.5 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/40 text-cyan-200 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            <Settings className="w-3.5 h-3.5 text-cyan-300" />
+            <span className="hidden sm:inline">Settings</span>
+          </button>
 
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#0d0f14] border border-cyan-500/25">
             <span
@@ -529,6 +611,19 @@ export default function App() {
         onRunCommand={handleRunTerminalCommand}
         onRunAgent={handleRunTerminalAgent}
         onClear={handleClearTerminal}
+      />
+
+      <SettingsModal
+        open={settingsOpen}
+        initialTab={settingsInitialTab}
+        onClose={() => setSettingsOpen(false)}
+        onSettingsChanged={(next) => setAppSettings(next)}
+        onTriggerMood={(mood, speakDizzy) => {
+          setForcedNotchMood({ mood, ts: Date.now() });
+          if (speakDizzy) {
+            void speakDeepVoice('উফফ! আমার মাথা ঘুরছে! এতো জোরে আঙুল ঘোরাবেন না!');
+          }
+        }}
       />
 
       <OfflineIndicator />

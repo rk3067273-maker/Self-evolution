@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Brahma AI Evo</string>
+    <string name="accessibility_service_description">Allows Brahma AI Evo to execute voice-driven taps, scrolling, navigation, and app automation on your Android device.</string>
 </resources>

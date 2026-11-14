@@ -15,6 +15,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { LanguageMode, VoiceProfile } from '../types/brahma';
+import { brahmaFetch, getApiBaseUrl, isNativeApkRuntime } from '../lib/brahmaClient';
 
 interface LiveVisionPanelProps {
   languageMode: LanguageMode;
@@ -303,8 +304,38 @@ export const LiveVisionPanel: React.FC<LiveVisionPanelProps> = ({ languageMode, 
     nextStartTimeRef.current = outputAudioCtxRef.current.currentTime;
 
     const voiceParam = voiceProfile === 'commanding' ? 'Fenrir' : 'Charon';
-    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProto}//${window.location.host}/ws/live-vision?lang=${encodeURIComponent(
+    const configuredBase = getApiBaseUrl();
+
+    // Standalone Android APK mode without backend server: stream camera frames via on-device Gemini API
+    if (isNativeApkRuntime() && !configuredBase) {
+      setIsConnecting(false);
+      setIsStreaming(true);
+      isStreamingRef.current = true;
+      setStatusNote('Android Standalone Live Vision চালু (On-Device Gemini Frame Stream)');
+
+      frameIntervalRef.current = window.setInterval(() => {
+        const video = videoRef.current;
+        if (!video || video.readyState < 2 || video.videoWidth === 0) return;
+        const c = document.createElement('canvas');
+        const scale = Math.min(1, 720 / video.videoWidth);
+        c.width = Math.round(video.videoWidth * scale);
+        c.height = Math.round(video.videoHeight * scale);
+        c.getContext('2d')?.drawImage(video, 0, 0, c.width, c.height);
+        const dataUrl = c.toDataURL('image/jpeg', 0.7);
+        setFramesSent((n) => n + 1);
+        setLastFrameTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        void analyzeSingleFrame(
+          dataUrl,
+          'image/jpeg',
+          'ক্যামেরায় যা দেখা যাচ্ছে তা ১-২ লাইনে সংক্ষেপে বলো।'
+        );
+      }, 4500);
+      return;
+    }
+
+    const wsTarget = configuredBase ? new URL(configuredBase) : window.location;
+    const wsProto = wsTarget.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProto}//${wsTarget.host}/ws/live-vision?lang=${encodeURIComponent(
       languageMode === 'auto' ? 'bn' : languageMode
     )}&voice=${encodeURIComponent(voiceParam)}`;
 
@@ -420,7 +451,7 @@ export const LiveVisionPanel: React.FC<LiveVisionPanelProps> = ({ languageMode, 
     setAnalyzingFrame(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/vision/analyze-frame', {
+      const res = await brahmaFetch('/api/vision/analyze-frame', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

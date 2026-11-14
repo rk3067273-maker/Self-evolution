@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Cpu, ImagePlus, Sparkles, AlertTriangle, CheckCircle2, X } from 'lucide-react';
 import type { CircuitSchematic } from '../types/brahma';
+import { brahmaFetch } from '../lib/brahmaClient';
 
 interface CircuitHudPanelProps {
   externalSchematic?: CircuitSchematic | null;
@@ -39,7 +40,7 @@ export const CircuitHudPanel: React.FC<CircuitHudPanelProps> = ({ externalSchema
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetch('/api/circuit/presets')
+    brahmaFetch('/api/circuit/presets')
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data.presets)) {
@@ -115,7 +116,7 @@ export const CircuitHudPanel: React.FC<CircuitHudPanelProps> = ({ externalSchema
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/circuit/solve', {
+      const res = await brahmaFetch('/api/circuit/solve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

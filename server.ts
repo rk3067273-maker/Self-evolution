@@ -2520,8 +2520,10 @@ Propose ONE brand new, genuinely practical executable skill (e.g. unit/currency 
       'android/settings.gradle',
       'android/app/build.gradle',
       'android/app/src/main/AndroidManifest.xml',
+      'android/app/src/main/res/xml/accessibility_service_config.xml',
       'android/app/src/main/java/com/brahma/evo/MainActivity.kt',
       'android/app/src/main/java/com/brahma/evo/BrahmaOverlayService.kt',
+      'android/app/src/main/java/com/brahma/evo/BrahmaAccessibilityService.kt',
       '.github/workflows/build-apk.yml',
     ];
     const fileChecks = requiredFiles.map((f) => ({

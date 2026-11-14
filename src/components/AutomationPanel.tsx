@@ -17,6 +17,7 @@ import type {
   BrahmaTab,
   LanguageMode,
 } from '../types/brahma';
+import { brahmaFetch } from '../lib/brahmaClient';
 
 interface AutomationPanelProps {
   languageMode: LanguageMode;
@@ -40,7 +41,7 @@ export const AutomationPanel: React.FC<AutomationPanelProps> = ({
 
   const loadWorkflows = async () => {
     try {
-      const res = await fetch('/api/automations');
+      const res = await brahmaFetch('/api/automations');
       const data = await res.json();
       if (Array.isArray(data.workflows)) setWorkflows(data.workflows);
     } catch {
@@ -63,7 +64,7 @@ export const AutomationPanel: React.FC<AutomationPanelProps> = ({
     setErrorMsg(null);
     navigator.vibrate?.([30, 40, 30]);
     try {
-      const res = await fetch(`/api/automations/run/${wf.id}`, {
+      const res = await brahmaFetch(`/api/automations/run/${wf.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ languageMode }),
@@ -85,13 +86,13 @@ export const AutomationPanel: React.FC<AutomationPanelProps> = ({
   };
 
   const handleToggle = async (id: string) => {
-    const res = await fetch(`/api/automations/toggle/${id}`, { method: 'POST' });
+    const res = await brahmaFetch(`/api/automations/toggle/${id}`, { method: 'POST' });
     const data = await res.json();
     if (Array.isArray(data.workflows)) setWorkflows(data.workflows);
   };
 
   const handleDelete = async (id: string) => {
-    const res = await fetch(`/api/automations/${id}`, { method: 'DELETE' });
+    const res = await brahmaFetch(`/api/automations/${id}`, { method: 'DELETE' });
     const data = await res.json();
     if (Array.isArray(data.workflows)) setWorkflows(data.workflows);
   };
@@ -102,7 +103,7 @@ export const AutomationPanel: React.FC<AutomationPanelProps> = ({
     setCreating(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/automations/create-ai', {
+      const res = await brahmaFetch('/api/automations/create-ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: prompt.trim() }),

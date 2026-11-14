@@ -15,6 +15,7 @@ import {
   Search,
 } from 'lucide-react';
 import type { IdentityState, MemoryItem, RemoteLog, SharedFileItem } from '../types/brahma';
+import { brahmaFetch } from '../lib/brahmaClient';
 
 export const RemoteAndIdentityPanel: React.FC = () => {
   const [subTab, setSubTab] = useState<'remote' | 'identity'>('remote');
@@ -38,9 +39,9 @@ export const RemoteAndIdentityPanel: React.FC = () => {
   const loadAll = async () => {
     try {
       const [remRes, idRes, memRes] = await Promise.all([
-        fetch('/api/remote/state').then((r) => r.json()),
-        fetch('/api/identity').then((r) => r.json()),
-        fetch('/api/memory').then((r) => r.json()),
+        brahmaFetch('/api/remote/state').then((r) => r.json()),
+        brahmaFetch('/api/identity').then((r) => r.json()),
+        brahmaFetch('/api/memory').then((r) => r.json()),
       ]);
       if (Array.isArray(remRes.logs)) setLogs(remRes.logs);
       if (Array.isArray(remRes.files)) setFiles(remRes.files);
@@ -56,7 +57,7 @@ export const RemoteAndIdentityPanel: React.FC = () => {
   }, []);
 
   const dispatchRemoteAction = async (payload: { type: string; action?: string; text?: string }) => {
-    const res = await fetch('/api/remote/action', {
+    const res = await brahmaFetch('/api/remote/action', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -72,7 +73,7 @@ export const RemoteAndIdentityPanel: React.FC = () => {
     reader.onload = async () => {
       const dataUrl = String(reader.result || '');
       const base64 = dataUrl.split(',')[1] || '';
-      const res = await fetch('/api/remote/upload', {
+      const res = await brahmaFetch('/api/remote/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -91,7 +92,7 @@ export const RemoteAndIdentityPanel: React.FC = () => {
 
   const handleSaveIdentity = async () => {
     if (!identity) return;
-    await fetch('/api/identity', {
+    await brahmaFetch('/api/identity', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(identity),
@@ -103,7 +104,7 @@ export const RemoteAndIdentityPanel: React.FC = () => {
   const handleAddMemory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMemKey.trim() || !newMemVal.trim()) return;
-    const res = await fetch('/api/memory', {
+    const res = await brahmaFetch('/api/memory', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ category: newMemCat, key: newMemKey.trim(), value: newMemVal.trim() }),
@@ -115,7 +116,7 @@ export const RemoteAndIdentityPanel: React.FC = () => {
   };
 
   const handleDeleteMemory = async (id: string) => {
-    const res = await fetch(`/api/memory/${id}`, { method: 'DELETE' });
+    const res = await brahmaFetch(`/api/memory/${id}`, { method: 'DELETE' });
     const data = await res.json();
     if (Array.isArray(data.memories)) setMemories(data.memories);
   };
