@@ -1,0 +1,6 @@
+{
+  "name": "Brahma AI Evo",
+  "description": "Self-evolving AI assistant command center with 3D Neural Orb, HoloGlobe & Radar, Circuit Assembler HUD, Project Ultron Skill Forge, Live Voice, Smart Home, and Office Architect.",
+  "requestFramePermissions": ["microphone", "camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
